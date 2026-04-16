@@ -1,6 +1,6 @@
 # json-memory
 
-**Hierarchical associative memory for AI agents** — compress, structure, and navigate agent memory like a human brain.
+**Structured memory for AI agents** — organize, access, and navigate agent memory like a human brain.
 
 ## The Problem
 
@@ -11,7 +11,7 @@ AI agents have limited memory windows. Storing facts as verbose prose wastes tok
  Uses they/them pronouns. Timezone is UTC. Platform is Telegram. Prefers
  technical precision, especially in coding contexts. Wants a direct, warm..."
 ```
-**~300 chars** for basic user info.
+**~300 chars** for basic user info. No structured access — you scan the entire text every time.
 
 ## The Solution
 
@@ -20,16 +20,28 @@ Store memory as nested JSON with short keys — like synapses in a brain:
 ```json
 {"u":{"n":"Alice","c":"@alice","p":"Alice","g":"they/them","tz":"UTC","plat":"Telegram"}}
 ```
-**~95 chars** — same data, **68% smaller**.
+**~95 chars** for the same data. But the real win isn't size — it's **O(1) access via dotted paths**: `memory.u.n` → `"Alice"`. No scanning. No parsing prose. Just keys.
 
-Access via dotted paths: `memory.u.n` → `"Alice"`
+## Why Structured Memory?
+
+| | Prose | JSON Memory |
+|---|---|---|
+| Access pattern | Scan entire text | `memory.u.n` → instant |
+| Nested hierarchy | ❌ Flat | ✅ Unlimited depth |
+| Schema validation | ❌ No | ✅ Yes |
+| Merge/upsert | ❌ Rewrite everything | ✅ Per-key updates |
+| Human readable | ✅ Yes | ❌ Compact (but AI reads it) |
+
+The trade-off: JSON is less human-readable but **machine-optimized**. For LLM agents with token budgets, that's the right call.
 
 ## Key Features
 
 - 🧠 **Hierarchical nesting** — organize memory like a semantic tree
-- 🗜️ **75% compression** — short keys + JSON minification
+- 🗜️ **Key abbreviation** — ~25% size reduction on JSON keys
+- 📦 **JSON minification** — ~30% savings removing whitespace
 - ⚡ **Sub-millisecond parsing** — 0.05ms for 2KB of memory
-- 🔗 **Synapse-like linking** — concepts connect to related concepts
+- 🔗 **Synapse-like linking** — concepts connect to related concepts with weighted traversal
+- 🐕 **WeightGate middleware** — passive learning from conversation flow
 - 📐 **Schema validation** — define your memory structure once
 - 🐍 **Zero dependencies** — pure Python, stdlib only
 
@@ -194,14 +206,31 @@ Agent msg ──→ process_output() ──→ detect usage ──→ weights �
 - **Agent's response** → further strengthens used concepts (+0.025)
 - **Disabled gate** → returns empty dict, no side effects
 
-## Compression Benchmarks
+## Compression Reality
 
-| Data Type | Prose | JSON | Savings |
-|-----------|-------|------|---------|
-| User profile (10 fields) | 300 chars | 95 chars | 68% |
-| Server config (8 fields) | 250 chars | 120 chars | 52% |
-| Bot config (6 fields) | 220 chars | 130 chars | 41% |
-| Full memory (50 fields) | 2,200 chars | 1,200 chars | 45% |
+The `compress()` module abbreviates JSON keys (e.g., `email` → `em`). Here's what it actually saves:
+
+| Technique | Savings | What it does |
+|-----------|---------|--------------|
+| Key abbreviation | ~25% | `email` → `em`, `configuration` → `cfg` |
+| JSON minification | ~30% | Removes whitespace from pretty-printed JSON |
+| Combined | ~45-50% | Abbreviation + minification applied together |
+
+**What it does NOT do:** compress values, deduplicate data, or apply general-purpose compression (gzip, zstd, etc.).
+
+```python
+from json_memory import compress, minify, savings_report
+
+data = {"user": {"email": "alice@example.com", "timezone": "UTC+1"}}
+compressed = compress(data)  # {"u": {"em": "alice@example.com", "tz": "UTC+1"}}
+
+# Measure real savings (JSON vs JSON, not prose vs JSON)
+report = savings_report(
+    json.dumps(data),
+    json.dumps(compressed)
+)
+# {"savings_pct": 8.3, "ratio": 0.917}  ← honest numbers
+```
 
 Parse speed: **0.05ms** for 2KB (tested on commodity hardware)
 
@@ -209,10 +238,10 @@ Parse speed: **0.05ms** for 2KB (tested on commodity hardware)
 
 | Feature | Prose Memory | JSON Memory |
 |---------|-------------|-------------|
-| Human readable | ✅ Yes | ❌ No (but AI reads it) |
+| Human readable | ✅ Yes | ❌ Compact (but AI reads it) |
 | Structured access | ❌ Scan entire text | ✅ Dotted path lookup |
 | Nested hierarchy | ❌ Flat | ✅ Unlimited depth |
-| Space efficiency | ❌ Verbose | ✅ 45-75% smaller |
+| Merge/upsert | ❌ Rewrite everything | ✅ Per-key updates |
 | Parse speed | N/A | ✅ 0.05ms |
 | Schema validation | ❌ No | ✅ Yes |
 

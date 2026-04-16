@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "json-memory"
-version = "0.1.3"
+version = "0.1.4"
 description = "Hierarchical associative memory for AI agents — compress, structure, and navigate agent memory like a human brain"
 readme = "README.md"
 requires-python = ">=3.9"

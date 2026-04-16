@@ -74,11 +74,14 @@ def decompress(data: dict, abbreviations: dict = None) -> dict:
 
 
 def savings_report(original: str, compressed: str) -> dict:
-    """Calculate compression savings.
+    """Calculate size difference between two strings.
+
+    Compares two JSON strings (e.g., expanded vs abbreviated keys).
+    For accurate results, compare JSON-vs-JSOn, not prose-vs-JSON.
 
     Args:
-        original: The original text (prose or expanded JSON).
-        compressed: The compressed text (minified JSON).
+        original: The original JSON string (expanded keys).
+        compressed: The compressed JSON string (abbreviated keys).
 
     Returns:
         Dict with size metrics and savings percentage.
