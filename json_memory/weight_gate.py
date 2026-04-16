@@ -30,11 +30,105 @@ Usage:
 """
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Optional, Union
 
 from .synapse import Synapse
+
+# ── Tokenization & Stemming ─────────────────────────────────────────
+# Simple suffix-based stemmer for English word variants.
+# Handles plurals, gerunds, past tense, and common derivations.
+# Not a full NLP stemmer — just enough to prevent false substring matches.
+
+_SUFFIX_RULES = [
+    # (suffix_to_strip, replacement) — longest first
+    ("ies", "y"),       # strategies → strategy
+    ("tion", ""),       # configuration → configura
+    ("sion", ""),       # compression → compres
+    ("ment", ""),       # deployment → deploy
+    ("ness", ""),       # readiness → ready
+    ("ally", ""),       # technically → technic
+    ("ling", "le"),     # debugging → debugle (fallback)
+    ("ing", ""),        # running → runn, debugged → debugg
+    ("ers", ""),        # traders → trader
+    ("est", ""),        # fastest → fast
+    ("ful", ""),        # helpful → help
+    ("ive", ""),        # active → act
+    ("ent", ""),        # current → curr
+    ("ant", ""),        # trading → trad
+    ("ion", ""),        # prediction → predict
+    ("ied", "y"),       # modified → modify
+    ("ed", ""),         # debugged → debugg
+    ("ly", ""),         # quickly → quick
+    ("er", ""),         # trader → trad
+    ("es", ""),         # watches → watch
+    ("al", ""),         # technical → technic
+    ("en", ""),         # broken → brok
+    ("s", ""),          # bots → bot
+]
+
+
+def _candidates(word: str) -> set[str]:
+    """Generate all plausible root forms of a word.
+
+    Returns original word + all suffix-stripped variants.
+    Also handles consonant doubling (debugged → debugg → debug).
+    """
+    word = word.lower()
+    result = {word}
+    if len(word) <= 3:
+        return result
+
+    for suffix, replacement in _SUFFIX_RULES:
+        if word.endswith(suffix):
+            stem = word[:-len(suffix)] + replacement
+            if len(stem) >= 3:
+                result.add(stem)
+                # Handle consonant doubling: debugg → debug, runn → run
+                if (len(stem) >= 4
+                        and stem[-1] == stem[-2]
+                        and stem[-1] not in 'aeiou'):
+                    result.add(stem[:-1])
+
+    return result
+
+
+def _tokenize(text: str) -> set[str]:
+    """Extract all word forms from text as a flat set of candidates.
+
+    For each token, generates all plausible roots so we can match
+    "debugged" against "debug" via shared root set overlap.
+    """
+    raw_tokens = re.findall(r'\b\w+\b', text.lower())
+    all_forms = set()
+    for token in raw_tokens:
+        all_forms.update(_candidates(token))
+    return all_forms
+
+
+def _matches_term(tokens: set[str], term: str) -> bool:
+    """Check if a term (concept or association) appears in the token set.
+
+    Compares candidate sets for overlap — if any root form of the term
+    matches any root form found in text, it's a hit.
+
+    Handles:
+    - Exact word match: "debug" in "I debug the issue"
+    - Stemmed match: "debug" in "I debugged the issue"
+    - Plural match: "bot" in "the bots crashed"
+    - Multi-word terms: "check_logs" matches when "check" and "logs" present
+    - Underscore/space normalization: "check_logs" == "check logs"
+    """
+    term_lower = term.lower().replace("_", " ")
+    parts = term_lower.split()
+
+    term_candidates = set()
+    for part in parts:
+        term_candidates.update(_candidates(part))
+
+    return bool(term_candidates & tokens)
 
 
 class WeightGate:
@@ -128,23 +222,28 @@ class WeightGate:
     def process_input(self, text: str) -> dict:
         """Process user input — detect concepts and update weights.
 
+        Uses word-boundary tokenization + suffix stemming to detect
+        concepts and associations. Avoids false positives from substring
+        matching (e.g., "debug" won't match "debugging" as substring —
+        it matches via stem "debug").
+
         If gate is disabled, returns empty dict (no-op).
         """
         if not self._enabled:
             return {}
 
-        text_lower = text.lower()
+        tokens = _tokenize(text)
         self._interactions += 1
         detected = {}
 
         for concept, assocs in self._synapse._weights.items():
-            concept_mentioned = concept.lower() in text_lower
+            concept_mentioned = _matches_term(tokens, concept)
 
             if concept_mentioned:
                 for assoc, weight in list(assocs.items()):
                     if assoc.startswith("_"):
                         continue
-                    if assoc.lower() in text_lower:
+                    if _matches_term(tokens, assoc):
                         self._synapse.set_weight(concept, assoc,
                                                  min(1.0, weight + self.boost_rate))
                         detected.setdefault(concept, []).append(f"{assoc}↑")
@@ -159,19 +258,20 @@ class WeightGate:
     def process_output(self, text: str) -> dict:
         """Process agent output — strengthen concepts that were actually used.
 
+        Uses word-boundary tokenization + suffix stemming for detection.
         If gate is disabled, returns empty dict (no-op).
         """
         if not self._enabled:
             return {}
 
-        text_lower = text.lower()
+        tokens = _tokenize(text)
         strengthened = {}
 
         for concept, assocs in self._synapse._weights.items():
             for assoc, weight in list(assocs.items()):
                 if assoc.startswith("_"):
                     continue
-                if assoc.lower().replace("_", " ") in text_lower:
+                if _matches_term(tokens, assoc):
                     new_w = min(1.0, weight + self.boost_rate * 0.5)
                     self._synapse.set_weight(concept, assoc, new_w)
                     strengthened.setdefault(concept, []).append(
