@@ -6,6 +6,7 @@ Mimics how human memory works: thinking of "coffee" activates
 """
 
 import json
+from pathlib import Path
 from typing import Optional
 
 
@@ -241,6 +242,22 @@ class Synapse:
     def export(self) -> str:
         """Export as minified JSON string."""
         return json.dumps(self.to_dict(), separators=(",", ":"))
+
+    def save(self, path: str) -> None:
+        """Save graph to a JSON file."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w") as f:
+            json.dump(self.to_dict(), f, separators=(",", ":"))
+
+    @classmethod
+    def load(cls, path: str) -> "Synapse":
+        """Load graph from a JSON file. Returns empty Synapse if file missing."""
+        p = Path(path)
+        if p.exists():
+            with open(p) as f:
+                return cls.from_dict(json.load(f))
+        return cls()
 
     @classmethod
     def from_dict(cls, data: dict) -> "Synapse":

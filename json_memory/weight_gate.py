@@ -1,43 +1,54 @@
 """
 WeightGate — Passive middleware for automatic synapse weight updates.
 
-Sits between input/output and updates weights transparently.
-No explicit tool calls needed.
+Wraps a Synapse instance. Sits between input/output and updates weights
+transparently through the shared Synapse graph. No explicit tool calls needed.
+Single source of truth — no parallel data structures.
 
 Usage:
-    from json_memory import WeightGate
+    from json_memory import Synapse, WeightGate
 
-    # Enable the gate
-    gate = WeightGate("/path/to/synapse.json")
-    gate.enable()
+    # Option A: WeightGate creates and owns the Synapse
+    gate = WeightGate("/path/to/synapse.json", enabled=True)
 
-    # Process messages (weights auto-update)
-    gate.process_input("How do I restart the bot?")
-    gate.process_output("Run: kill && nohup ./bot > log")
+    # Option B: WeightGate wraps an existing Synapse (shared state)
+    brain = Synapse()
+    brain.link("coffee", ["cappuccino", "espresso"])
+    gate = WeightGate(synapse=brain, enabled=True)
 
-    # Disable when not needed
-    gate.disable()
+    # Process messages (weights auto-update in the shared graph)
+    gate.process_input("I love cappuccino")
+    gate.process_output("Here's your cappuccino")
 
-    # Or use as context manager
+    # Both see the same state
+    brain.top_associations("coffee")
+    gate.top_associations("coffee")  # same result
+
+    # Or use as context manager (auto-saves on exit)
     with WeightGate("/path/to/synapse.json") as gate:
         gate.process_conversation(user_msg, agent_response)
 """
 
 import json
-import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
+
+from .synapse import Synapse
 
 
 class WeightGate:
-    """Passive weight update middleware for synapse memory.
+    """Passive weight update middleware — wraps a Synapse graph.
 
     Intercepts messages and updates concept weights automatically.
-    Can be enabled/disabled at runtime.
+    Can be enabled/disabled at runtime. Single source of truth:
+    all graph operations delegate to the underlying Synapse.
 
     Args:
-        path: Path to the synapse JSON file.
+        path: Path to the synapse JSON file (creates Synapse from this).
+              Mutually exclusive with `synapse` param.
+        synapse: An existing Synapse instance to wrap (shared state).
+                 Mutually exclusive with `path` param.
         decay_rate: How much unused associations decay per interaction (default 0.01).
         boost_rate: How much mentioned associations strengthen (default 0.05).
         enabled: Start enabled or disabled (default False — opt-in).
@@ -50,24 +61,36 @@ class WeightGate:
         [('cappuccino', 0.95), ('americano', 0.29)]
     """
 
-    def __init__(self, path: str, decay_rate: float = 0.01,
-                 boost_rate: float = 0.05, enabled: bool = False):
-        self.path = Path(path)
+    def __init__(self, path: str = None, synapse: Synapse = None,
+                 decay_rate: float = 0.01, boost_rate: float = 0.05,
+                 enabled: bool = False):
+        if path is not None and synapse is not None:
+            raise ValueError("Provide either 'path' or 'synapse', not both")
+        if path is None and synapse is None:
+            raise ValueError("Provide either 'path' or 'synapse'")
+
+        self._path = Path(path) if path else None
+        self._synapse = synapse if synapse is not None else Synapse.load(str(self._path))
         self.decay_rate = decay_rate
         self.boost_rate = boost_rate
         self._enabled = enabled
-        self.synapse = self._load()
+        self._interactions = 0
+        self._created = time.time()
 
-    def _load(self) -> dict:
-        if self.path.exists():
-            with open(self.path) as f:
-                return json.load(f)
-        return {"_meta": {"created": time.time(), "interactions": 0}, "concepts": {}}
+    @property
+    def synapse(self) -> Synapse:
+        """The underlying Synapse graph. Direct access for graph operations."""
+        return self._synapse
+
+    @property
+    def path(self) -> Optional[Path]:
+        """File path for persistence (None if wrapping an external Synapse)."""
+        return self._path
 
     def _save(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "w") as f:
-            json.dump(self.synapse, f, separators=(",", ":"))
+        """Persist to file if we own the path."""
+        if self._path:
+            self._synapse.save(str(self._path))
 
     # ── Enable/Disable ───────────────────────────────────────────
 
@@ -111,10 +134,10 @@ class WeightGate:
             return {}
 
         text_lower = text.lower()
-        self.synapse["_meta"]["interactions"] += 1
+        self._interactions += 1
         detected = {}
 
-        for concept, assocs in self.synapse.get("concepts", {}).items():
+        for concept, assocs in self._synapse._weights.items():
             concept_mentioned = concept.lower() in text_lower
 
             if concept_mentioned:
@@ -122,10 +145,12 @@ class WeightGate:
                     if assoc.startswith("_"):
                         continue
                     if assoc.lower() in text_lower:
-                        assocs[assoc] = min(1.0, weight + self.boost_rate)
+                        self._synapse.set_weight(concept, assoc,
+                                                 min(1.0, weight + self.boost_rate))
                         detected.setdefault(concept, []).append(f"{assoc}↑")
                     else:
-                        assocs[assoc] = max(0.0, weight - self.decay_rate)
+                        self._synapse.set_weight(concept, assoc,
+                                                 max(0.0, weight - self.decay_rate))
                         detected.setdefault(concept, []).append(f"{assoc}↓")
 
         self._save()
@@ -142,14 +167,15 @@ class WeightGate:
         text_lower = text.lower()
         strengthened = {}
 
-        for concept, assocs in self.synapse.get("concepts", {}).items():
+        for concept, assocs in self._synapse._weights.items():
             for assoc, weight in list(assocs.items()):
                 if assoc.startswith("_"):
                     continue
                 if assoc.lower().replace("_", " ") in text_lower:
-                    assocs[assoc] = min(1.0, weight + self.boost_rate * 0.5)
+                    new_w = min(1.0, weight + self.boost_rate * 0.5)
+                    self._synapse.set_weight(concept, assoc, new_w)
                     strengthened.setdefault(concept, []).append(
-                        f"{assoc}→{assocs[assoc]:.2f}"
+                        f"{assoc}→{new_w:.2f}"
                     )
 
         self._save()
@@ -169,103 +195,87 @@ class WeightGate:
         return {
             "input": input_changes,
             "output": output_changes,
-            "total_interactions": self.synapse["_meta"]["interactions"],
+            "total_interactions": self._interactions,
         }
 
-    # ── Management ────────────────────────────────────────────────
+    # ── Delegated Graph Operations ───────────────────────────────
+    # All delegate to the underlying Synapse — single source of truth.
 
     def add_concept(self, concept: str, associations: dict[str, float]) -> None:
         """Add a new concept with weighted associations."""
-        if "concepts" not in self.synapse:
-            self.synapse["concepts"] = {}
-        self.synapse["concepts"][concept] = associations
+        self._synapse.link(concept, list(associations.keys()), weights=associations)
         self._save()
 
     def remove_concept(self, concept: str) -> bool:
-        """Remove a concept. Returns True if found and removed."""
-        if concept in self.synapse.get("concepts", {}):
-            del self.synapse["concepts"][concept]
+        """Remove a concept and all its links. Returns True if found."""
+        if concept in self._synapse._weights:
+            # Remove from all neighbor link lists
+            for neighbor in list(self._synapse._links.get(concept, [])):
+                if concept in self._synapse._links.get(neighbor, []):
+                    self._synapse._links[neighbor].remove(concept)
+                if neighbor in self._synapse._weights.get(concept, {}):
+                    pass  # will be deleted below
+                if concept in self._synapse._weights.get(neighbor, {}):
+                    del self._synapse._weights[neighbor][concept]
+                if concept in self._synapse._frequencies.get(neighbor, {}):
+                    del self._synapse._frequencies[neighbor][concept]
+
+            # Remove the concept itself
+            del self._synapse._links[concept]
+            del self._synapse._weights[concept]
+            del self._synapse._frequencies[concept]
             self._save()
             return True
         return False
 
     def get_weights(self, concept: str) -> dict:
         """Get current weights for a concept."""
-        return self.synapse.get("concepts", {}).get(concept, {})
+        return dict(self._synapse._weights.get(concept, {}))
 
     def top_associations(self, concept: str, limit: int = 5) -> list:
         """Get top associations by weight (descending)."""
-        assocs = self.get_weights(concept)
-        ranked = sorted(
-            [(k, v) for k, v in assocs.items() if not k.startswith("_")],
-            key=lambda x: x[1],
-            reverse=True,
-        )
-        return ranked[:limit]
+        return self._synapse.top_associations(concept, limit)
 
     def set_weight(self, concept: str, assoc: str, weight: float) -> None:
         """Manually set a weight."""
-        if concept not in self.synapse.get("concepts", {}):
-            self.synapse["concepts"][concept] = {}
-        self.synapse["concepts"][concept][assoc] = max(0.0, min(1.0, weight))
+        self._synapse.set_weight(concept, assoc, weight)
         self._save()
 
     def strengthen(self, concept: str, assoc: str, boost: float = None) -> float:
         """Manually strengthen an association."""
-        boost = boost or self.boost_rate
-        current = self.get_weights(concept).get(assoc, 0.5)
-        new = min(1.0, current + boost)
-        self.set_weight(concept, assoc, new)
-        return new
+        boost = boost if boost is not None else self.boost_rate
+        return self._synapse.strengthen(concept, assoc, boost)
 
     def weaken(self, concept: str, assoc: str, decay: float = None) -> float:
         """Manually weaken an association."""
-        decay = decay or self.decay_rate
-        current = self.get_weights(concept).get(assoc, 0.5)
-        new = max(0.0, current - decay)
-        self.set_weight(concept, assoc, new)
-        return new
+        decay = decay if decay is not None else self.decay_rate
+        return self._synapse.weaken(concept, assoc, decay)
 
     # ── Import/Export ─────────────────────────────────────────────
 
     def export_compact(self) -> str:
-        """Export synapse data in compact JSON format."""
+        """Export synapse weights in compact JSON format."""
         compact = {}
-        for concept, assocs in self.synapse.get("concepts", {}).items():
-            compact[concept] = {
-                k: round(v, 2)
-                for k, v in assocs.items()
-                if not k.startswith("_")
-            }
+        for concept, assocs in self._synapse._weights.items():
+            items = {k: round(v, 2) for k, v in assocs.items() if not k.startswith("_")}
+            if items:
+                compact[concept] = items
         return json.dumps(compact, separators=(",", ":"))
-
-    def import_from_synapse(self, synapse_obj) -> int:
-        """Import concepts from a json_memory.Synapse instance.
-
-        Copies all weighted associations into the gate.
-        Returns number of concepts imported.
-        """
-        count = 0
-        for concept, weights in synapse_obj._weights.items():
-            self.add_concept(concept, dict(weights))
-            count += 1
-        return count
 
     # ── Stats ─────────────────────────────────────────────────────
 
     def get_stats(self) -> dict:
         """Get gate statistics."""
-        concepts = self.synapse.get("concepts", {})
         total_assocs = sum(
             len([k for k in v if not k.startswith("_")])
-            for v in concepts.values()
+            for v in self._synapse._weights.values()
         )
         return {
             "enabled": self._enabled,
-            "concepts": len(concepts),
+            "concepts": len(self._synapse._weights),
             "total_associations": total_assocs,
-            "interactions": self.synapse["_meta"]["interactions"],
-            "file": str(self.path),
+            "interactions": self._interactions,
+            "file": str(self._path) if self._path else "<shared synapse>",
         }
 
     def __repr__(self):

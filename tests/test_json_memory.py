@@ -511,9 +511,9 @@ class TestWeightGate:
     def test_add_remove_concept(self, tmp_path):
         gate = self._make_gate(tmp_path)
         gate.add_concept("new", {"a": 0.5, "b": 0.3})
-        assert "new" in gate.synapse["concepts"]
+        assert gate.get_weights("new") == {"a": 0.5, "b": 0.3}
         assert gate.remove_concept("new") is True
-        assert "new" not in gate.synapse["concepts"]
+        assert gate.get_weights("new") == {}
 
     def test_top_associations(self, tmp_path):
         gate = self._make_gate(tmp_path)
