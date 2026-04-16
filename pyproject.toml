@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "json-memory"
+version = "0.1.0"
+description = "Hierarchical associative memory for AI agents — compress, structure, and navigate agent memory like a human brain"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    {name = "Alice", email = "dev@example.com"}
+]
+keywords = ["ai", "agent", "memory", "compression", "json", "llm", "context"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.urls]
+Homepage = "https://github.com/dioncx/json-memory"
+Repository = "https://github.com/dioncx/json-memory"
+Issues = "https://github.com/dioncx/json-memory/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

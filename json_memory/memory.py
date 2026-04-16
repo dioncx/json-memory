@@ -1,0 +1,184 @@
+"""
+Memory — Core hierarchical JSON memory for AI agents.
+
+Provides dotted-path access to nested JSON data with minified storage.
+"""
+
+import json
+import time
+from typing import Any, Optional, Union
+
+
+class Memory:
+    """Hierarchical JSON memory with dotted-path access.
+
+    Args:
+        max_chars: Maximum character budget for the memory string.
+        data: Optional initial data dict.
+
+    Example:
+        >>> mem = Memory(max_chars=2000)
+        >>> mem.set("user.name", "Alice")
+        >>> mem.set("bot.restart", "kill && nohup ./bot > log")
+        >>> mem.get("user.name")
+        'Alice'
+        >>> mem.export()
+        '{"user":{"name":"Alice"},"bot":{"restart":"kill && nohup ./bot > log"}}'
+    """
+
+    def __init__(self, max_chars: int = 2200, data: Optional[dict] = None):
+        self.max_chars = max_chars
+        self._data: dict = data if data is not None else {}
+
+    # ── Core Access ───────────────────────────────────────────────
+
+    def get(self, path: str, default: Any = None) -> Any:
+        """Get a value by dotted path. Example: ``mem.get("bot.binance.rst")``"""
+        keys = path.split(".")
+        node = self._data
+        for key in keys:
+            if isinstance(node, dict) and key in node:
+                node = node[key]
+            else:
+                return default
+        return node
+
+    def set(self, path: str, value: Any) -> bool:
+        """Set a value by dotted path. Creates intermediate dicts as needed.
+
+        Returns True if set succeeded within max_chars budget.
+        Raises ValueError if it would exceed max_chars.
+        """
+        keys = path.split(".")
+        node = self._data
+        for key in keys[:-1]:
+            if key not in node or not isinstance(node[key], dict):
+                node[key] = {}
+            node = node[key]
+        node[keys[-1]] = value
+
+        if len(self.export()) > self.max_chars:
+            raise ValueError(
+                f"Memory overflow: setting '{path}' would use "
+                f"{len(self.export())}/{self.max_chars} chars"
+            )
+        return True
+
+    def delete(self, path: str) -> bool:
+        """Delete a value by dotted path. Returns True if found and deleted."""
+        keys = path.split(".")
+        node = self._data
+        for key in keys[:-1]:
+            if isinstance(node, dict) and key in node:
+                node = node[key]
+            else:
+                return False
+        if keys[-1] in node:
+            del node[keys[-1]]
+            return True
+        return False
+
+    def has(self, path: str) -> bool:
+        """Check if a dotted path exists."""
+        return self.get(path) is not None
+
+    def keys(self, path: str = "") -> list:
+        """List keys at a given path (or root if empty)."""
+        node = self.get(path) if path else self._data
+        if isinstance(node, dict):
+            return list(node.keys())
+        return []
+
+    # ── Bulk Operations ───────────────────────────────────────────
+
+    def merge(self, data: dict, prefix: str = "") -> int:
+        """Merge a dict into memory at an optional prefix path.
+
+        Returns number of keys merged.
+        """
+        count = 0
+        for key, value in data.items():
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                count += self.merge(value, prefix=path)
+            else:
+                self.set(path, value)
+                count += 1
+        return count
+
+    def to_dict(self) -> dict:
+        """Return the full memory as a plain dict."""
+        return json.loads(json.dumps(self._data))
+
+    def paths(self, prefix: str = "") -> list:
+        """List all leaf paths in the memory tree."""
+        results = []
+        node = self.get(prefix) if prefix else self._data
+        if isinstance(node, dict):
+            for key, value in node.items():
+                full_path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    results.extend(self.paths(full_path))
+                else:
+                    results.append(full_path)
+        return sorted(results)
+
+    # ── Serialization ─────────────────────────────────────────────
+
+    def export(self) -> str:
+        """Export as minified JSON string."""
+        return json.dumps(self._data, separators=(",", ":"), ensure_ascii=False)
+
+    def export_pretty(self) -> str:
+        """Export as pretty-printed JSON string."""
+        return json.dumps(self._data, indent=2, ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, json_str: str, max_chars: int = 2200) -> "Memory":
+        """Create Memory from a JSON string."""
+        data = json.loads(json_str)
+        return cls(max_chars=max_chars, data=data)
+
+    @classmethod
+    def from_file(cls, path: str, max_chars: int = 2200) -> "Memory":
+        """Create Memory from a JSON file."""
+        with open(path, "r") as f:
+            return cls.from_json(f.read(), max_chars=max_chars)
+
+    def save(self, path: str) -> None:
+        """Save memory to a JSON file."""
+        with open(path, "w") as f:
+            f.write(self.export())
+
+    # ── Stats ─────────────────────────────────────────────────────
+
+    def stats(self) -> dict:
+        """Return memory statistics."""
+        exported = self.export()
+        return {
+            "leaf_count": len(self.paths()),
+            "chars_used": len(exported),
+            "chars_max": self.max_chars,
+            "chars_free": self.max_chars - len(exported),
+            "utilization": f"{len(exported) / self.max_chars * 100:.1f}%",
+        }
+
+    # ── Dunder ────────────────────────────────────────────────────
+
+    def __getitem__(self, path: str) -> Any:
+        result = self.get(path)
+        if result is None:
+            raise KeyError(path)
+        return result
+
+    def __setitem__(self, path: str, value: Any) -> None:
+        self.set(path, value)
+
+    def __contains__(self, path: str) -> bool:
+        return self.has(path)
+
+    def __len__(self) -> int:
+        return len(self.export())
+
+    def __repr__(self) -> str:
+        return f"Memory(leafs={len(self.paths())}, chars={len(self.export())}/{self.max_chars})"
