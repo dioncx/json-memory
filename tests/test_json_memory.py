@@ -93,6 +93,42 @@ class TestMemory:
         with pytest.raises(ValueError, match="Memory overflow"):
             mem.set("key", "a" * 50)
 
+    def test_overflow_does_not_corrupt(self):
+        """Critical: failed set() must not leave dirty data."""
+        mem = Memory(max_chars=50)
+        mem.set("x", "hello")
+        original = mem.export()
+
+        # Try to set something that exceeds budget
+        with pytest.raises(ValueError):
+            mem.set("y", "a" * 100)
+
+        # Data must be unchanged after failed set
+        assert mem.export() == original
+        assert not mem.has("y")
+
+    def test_overflow_new_path_does_not_corrupt(self):
+        """Failed set on a new nested path must not create intermediate dicts."""
+        mem = Memory(max_chars=50)
+        mem.set("x", "hi")
+        original = mem.export()
+
+        with pytest.raises(ValueError):
+            mem.set("new.nested.path", "a" * 100)
+
+        assert mem.export() == original
+        assert not mem.has("new")
+
+    def test_overflow_replacement_does_not_corrupt(self):
+        """Failed replacement of existing key must restore old value."""
+        mem = Memory(max_chars=50)
+        mem.set("x", "hello")
+
+        with pytest.raises(ValueError):
+            mem.set("x", "a" * 100)
+
+        assert mem.get("x") == "hello"  # old value restored
+
     def test_stats(self):
         mem = Memory(max_chars=1000)
         mem.set("x", 1)

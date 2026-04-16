@@ -47,9 +47,14 @@ class Memory:
         """Set a value by dotted path. Creates intermediate dicts as needed.
 
         Returns True if set succeeded within max_chars budget.
-        Raises ValueError if it would exceed max_chars.
+        Raises ValueError if it would exceed max_chars (data unchanged).
         """
         keys = path.split(".")
+
+        # Snapshot current state for rollback
+        snapshot = json.loads(self.export())
+
+        # Build path and set value
         node = self._data
         for key in keys[:-1]:
             if key not in node or not isinstance(node[key], dict):
@@ -57,10 +62,13 @@ class Memory:
             node = node[key]
         node[keys[-1]] = value
 
+        # Check budget
         if len(self.export()) > self.max_chars:
+            # Rollback to snapshot
+            self._data = snapshot
             raise ValueError(
-                f"Memory overflow: setting '{path}' would use "
-                f"{len(self.export())}/{self.max_chars} chars"
+                f"Memory overflow: setting '{path}' would exceed "
+                f"{self.max_chars} chars"
             )
         return True
 
