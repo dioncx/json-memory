@@ -9,7 +9,7 @@ description = "Hierarchical associative memory for AI agents — compress, struc
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [
-    {name = "Alice", email = "dev@example.com"}
+    {name = "Dion Christian", email = "dion.christiann@gmail.com"}
 ]
 license = {text = "MIT"}
 keywords = ["ai", "agent", "memory", "compression", "json", "llm", "context"]
