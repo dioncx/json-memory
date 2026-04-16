@@ -79,7 +79,8 @@ class Synapse:
 
         Like thinking of a word and having related concepts come to mind.
         Uses BFS for correct level-order traversal without duplicates.
-        Results are sorted by weight (strongest associations first).
+        Results are sorted by cumulative weight along the strongest path
+        (product of link weights from root → node).
 
         Args:
             concept: The concept to activate.
@@ -94,34 +95,35 @@ class Synapse:
 
         seen = {concept}
         result = []
-        frontier = [concept]
+        cumulative: dict[str, float] = {}  # concept → best cumulative weight
+        frontier = [(concept, 1.0)]  # (node, cumulative_weight_from_root)
 
         for _ in range(depth):
             next_frontier = []
-            for node in frontier:
+            for node, node_weight in frontier:
                 for assoc in self._links.get(node, []):
                     if assoc not in seen:
                         seen.add(assoc)
+                        link_weight = self.get_weight(node, assoc)
+                        cum_weight = node_weight * link_weight
+                        cumulative[assoc] = cum_weight
                         result.append(assoc)
-                        next_frontier.append(assoc)
+                        next_frontier.append((assoc, cum_weight))
                         # Increment frequency
                         if node in self._frequencies and assoc in self._frequencies[node]:
                             self._frequencies[node][assoc] += 1
+                    else:
+                        # Node already seen via different path — keep stronger weight
+                        link_weight = self.get_weight(node, assoc)
+                        cum_weight = node_weight * link_weight
+                        if assoc in cumulative and cum_weight > cumulative[assoc]:
+                            cumulative[assoc] = cum_weight
             frontier = next_frontier
 
         if weighted and result:
-            result = self._sort_by_weight(concept, result, depth)
+            result.sort(key=lambda c: cumulative.get(c, 0.5), reverse=True)
 
         return result
-
-    def _sort_by_weight(self, root: str, concepts: list, depth: int) -> list:
-        """Sort concepts by combined weight from root, descending."""
-        scored = []
-        for c in concepts:
-            w = self.get_weight(root, c)
-            scored.append((c, w))
-        scored.sort(key=lambda x: x[1], reverse=True)
-        return [c for c, _ in scored]
 
     def get_weight(self, concept: str, assoc: str) -> float:
         """Get the weight of an association. Returns 0.5 if not set."""
