@@ -476,9 +476,18 @@ class TestWeightGate:
 
     def test_process_input_decay(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=True)
-        gate.process_input("I love coffee")  # concept mentioned, but not americano
+        # Concept + one association mentioned → competition → unmentioned decay
+        gate.process_input("I love coffee cappuccino")
         weights = gate.get_weights("coffee")
-        assert weights["americano"] < 0.3  # decayed (not mentioned)
+        assert weights["cappuccino"] > 0.5  # boosted (mentioned)
+        assert weights["americano"] < 0.3   # decayed (competition — lost to cappuccino)
+
+    def test_process_input_no_decay_without_competition(self, tmp_path):
+        gate = self._make_gate(tmp_path, enabled=True)
+        # Concept mentioned but no association → no competition → no decay
+        gate.process_input("I love coffee so much")
+        weights = gate.get_weights("coffee")
+        assert weights["americano"] == 0.3  # unchanged — no competition
 
     def test_process_output_strengthen(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=True)

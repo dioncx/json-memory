@@ -338,6 +338,7 @@ class WeightGate:
                  Mutually exclusive with `path` param.
         decay_rate: How much unused associations decay per interaction (default 0.01).
         boost_rate: How much mentioned associations strengthen (default 0.05).
+        min_weight: Floor for association weights — decay stops here (default 0.1).
         enabled: Start enabled or disabled (default False — opt-in).
 
     Example:
@@ -350,7 +351,7 @@ class WeightGate:
 
     def __init__(self, path: str = None, synapse: Synapse = None,
                  decay_rate: float = 0.01, boost_rate: float = 0.05,
-                 enabled: bool = False):
+                 min_weight: float = 0.1, enabled: bool = False):
         if path is not None and synapse is not None:
             raise ValueError("Provide either 'path' or 'synapse', not both")
         if path is None and synapse is None:
@@ -360,6 +361,7 @@ class WeightGate:
         self._synapse = synapse if synapse is not None else Synapse.load(str(self._path))
         self.decay_rate = decay_rate
         self.boost_rate = boost_rate
+        self.min_weight = min_weight
         self._enabled = enabled
         self._interactions = 0
         self._created = time.time()
@@ -420,6 +422,11 @@ class WeightGate:
         matching (e.g., "debug" won't match "debugging" as substring —
         it matches via shared root "debug").
 
+        Decay behavior: only fires when a concept AND at least one of its
+        associations are both mentioned — meaning there was a competition
+        and the unmentioned associations lost. Unmentioned concepts and
+        their associations are left untouched.
+
         If gate is disabled, returns empty dict (no-op).
         """
         if not self._enabled:
@@ -430,17 +437,34 @@ class WeightGate:
         detected = {}
 
         for concept in self._synapse.concepts():
-            concept_mentioned = _matches_term(tokens, concept)
+            if not _matches_term(tokens, concept):
+                continue  # Concept not mentioned — skip entirely
 
-            if concept_mentioned:
-                for assoc, weight in self._synapse.get_associations(concept).items():
-                    if assoc.startswith("_"):
-                        continue
-                    if _matches_term(tokens, assoc):
-                        self._synapse.strengthen(concept, assoc, self.boost_rate)
-                        detected.setdefault(concept, []).append(f"{assoc}↑")
-                    else:
-                        self._synapse.weaken(concept, assoc, self.decay_rate)
+            assocs = self._synapse.get_associations(concept)
+            mentioned_assocs = []
+            unmentioned_assocs = []
+
+            for assoc, weight in assocs.items():
+                if assoc.startswith("_"):
+                    continue
+                if _matches_term(tokens, assoc):
+                    mentioned_assocs.append(assoc)
+                else:
+                    unmentioned_assocs.append(assoc)
+
+            # Boost mentioned associations
+            for assoc in mentioned_assocs:
+                self._synapse.strengthen(concept, assoc, self.boost_rate)
+                detected.setdefault(concept, []).append(f"{assoc}↑")
+
+            # Decay unmentioned ONLY if competition occurred
+            # (concept mentioned + at least one association mentioned)
+            if mentioned_assocs:
+                for assoc in unmentioned_assocs:
+                    current = self._synapse.get_weight(concept, assoc)
+                    if current > self.min_weight:
+                        new_w = max(self.min_weight, current - self.decay_rate)
+                        self._synapse.set_weight(concept, assoc, new_w)
                         detected.setdefault(concept, []).append(f"{assoc}↓")
 
         self._save()
