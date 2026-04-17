@@ -1,6 +1,20 @@
 # json-memory
 
+[![PyPI](https://img.shields.io/pypi/v/json-memory)](https://pypi.org/project/json-memory/)
+[![Python](https://img.shields.io/pypi/pyversions/json-memory)](https://pypi.org/project/json-memory/)
+[![License](https://img.shields.io/pypi/l/json-memory)](LICENSE)
+[![Downloads](https://img.shields.io/pypi/dm/json-memory)](https://pypi.org/project/json-memory/)
+
 **Structured memory for AI agents** — organize, access, and navigate agent memory like a human brain.
+
+```bash
+pip install json-memory
+```
+
+**Performance** (991-char memory, commodity hardware):
+- Parse: **0.014ms** (72K parses/sec)
+- Access: **0.60μs** per dotted-path lookup
+- Zero dependencies, pure Python
 
 ## The Problem
 
