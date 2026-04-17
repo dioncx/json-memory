@@ -208,43 +208,41 @@ def _build_root_map() -> dict[str, str]:
 _COMMON_ROOTS = _build_root_map()
 
 # ── Layer 2: Suffix rules — fallback when snowball unavailable ──────
-# Order matters: longest/most specific suffixes first.
+# Only clearly productive suffixes (≥4 chars) that rarely false-match.
+# Short suffixes (-ing, -ed, -er, -es, -al, -en, -s, -ent, -ant, -ive)
+# are deliberately excluded — they match too many base words and produce
+# garbage stems: "current"→"curr", "important"→"import" (keyword!),
+# "power"→"pow", "signal"→"sign".
+#
+# Rule: if a suffix would fire on "signal", "power", "current", "important",
+# "happen", "cases" — it's too short. Remove it.
 
 _SUFFIX_RULES = [
+    # ≥6 chars — very safe, almost never false-match
     ("ational", "ate"),    # operational → operate
-    ("tional", "te"),      # functional → functe
     ("fulness", "ful"),    # helpfulness → helpful
     ("ousness", "ous"),    # dangerousness → dangerous
     ("iveness", "ive"),    # effectiveness → effective
-    ("ously", "ous"),      # dangerously → dangerous
-    ("ively", "ive"),      # effectively → effective
     ("lessly", "less"),    # endlessly → endless
     ("ically", "ic"),      # technically → technic
+    # 5 chars — safe
+    ("tional", "te"),      # functional → functe
+    ("ously", "ous"),      # dangerously → dangerous
+    ("ively", "ive"),      # effectively → effective
     ("ality", "al"),       # functionality → functional
     ("ities", "ity"),      # activities → activity
     ("ments", "ment"),     # deployments → deployment
-    ("ness", ""),          # readiness → ready (imperfect)
+    ("ally", "al"),        # technically → technical
+    # 4 chars — productive derivational suffixes
+    ("ness", ""),          # readiness → ready
     ("tion", ""),          # configuration → configura
     ("sion", ""),          # compression → compres
     ("ment", ""),          # deployment → deploy
-    ("ally", "al"),        # technically → technical
-    ("ing", ""),           # running → runn (consonant doubling helps)
     ("ies", "y"),          # strategies → strategy
     ("ied", "y"),          # modified → modify
-    ("ers", "er"),         # traders → trader
-    ("est", ""),           # fastest → fast
-    ("ful", ""),           # helpful → help
-    ("ive", ""),           # active → act
-    ("ent", ""),           # current → curr
-    ("ant", ""),           # trading → trad
-    ("ion", ""),           # prediction → predict
-    ("ed", ""),            # debugged → debugg (consonant doubling helps)
-    ("ly", ""),            # quickly → quick
-    ("er", ""),            # trader → trad
-    ("es", ""),            # watches → watch
-    ("al", ""),            # technical → technic
-    ("en", ""),            # broken → brok
-    ("s", ""),             # bots → bot
+    # Deliberately REMOVED (too short, high false-positive rate):
+    #   ing, ed, er, es, al, en, s, ent, ant, ive, ly, ful, est, ers
+    # Dictionary + snowball handle these cases.
 ]
 
 
