@@ -431,20 +431,18 @@ class WeightGate:
         self._interactions += 1
         detected = {}
 
-        for concept, assocs in self._synapse._weights.items():
+        for concept in self._synapse.concepts():
             concept_mentioned = _matches_term(tokens, concept)
 
             if concept_mentioned:
-                for assoc, weight in list(assocs.items()):
+                for assoc, weight in self._synapse.get_associations(concept).items():
                     if assoc.startswith("_"):
                         continue
                     if _matches_term(tokens, assoc):
-                        self._synapse.set_weight(concept, assoc,
-                                                 min(1.0, weight + self.boost_rate))
+                        self._synapse.strengthen(concept, assoc, self.boost_rate)
                         detected.setdefault(concept, []).append(f"{assoc}↑")
                     else:
-                        self._synapse.set_weight(concept, assoc,
-                                                 max(0.0, weight - self.decay_rate))
+                        self._synapse.weaken(concept, assoc, self.decay_rate)
                         detected.setdefault(concept, []).append(f"{assoc}↓")
 
         self._save()
@@ -462,13 +460,14 @@ class WeightGate:
         tokens = _tokenize(text)
         strengthened = {}
 
-        for concept, assocs in self._synapse._weights.items():
-            for assoc, weight in list(assocs.items()):
+        for concept in self._synapse.concepts():
+            for assoc, weight in self._synapse.get_associations(concept).items():
                 if assoc.startswith("_"):
                     continue
                 if _matches_term(tokens, assoc):
-                    new_w = min(1.0, weight + self.boost_rate * 0.5)
-                    self._synapse.set_weight(concept, assoc, new_w)
+                    new_w = self._synapse.strengthen(
+                        concept, assoc, self.boost_rate * 0.5
+                    )
                     strengthened.setdefault(concept, []).append(
                         f"{assoc}→{new_w:.2f}"
                     )
@@ -503,25 +502,14 @@ class WeightGate:
 
     def remove_concept(self, concept: str) -> bool:
         """Remove a concept and all its links. Returns True if found."""
-        if concept in self._synapse._weights:
-            for neighbor in list(self._synapse._links.get(concept, [])):
-                if concept in self._synapse._links.get(neighbor, []):
-                    self._synapse._links[neighbor].remove(concept)
-                if concept in self._synapse._weights.get(neighbor, {}):
-                    del self._synapse._weights[neighbor][concept]
-                if concept in self._synapse._frequencies.get(neighbor, {}):
-                    del self._synapse._frequencies[neighbor][concept]
-
-            del self._synapse._links[concept]
-            del self._synapse._weights[concept]
-            del self._synapse._frequencies[concept]
+        removed = self._synapse.remove_concept(concept)
+        if removed:
             self._save()
-            return True
-        return False
+        return removed
 
     def get_weights(self, concept: str) -> dict:
         """Get current weights for a concept."""
-        return dict(self._synapse._weights.get(concept, {}))
+        return self._synapse.get_associations(concept)
 
     def top_associations(self, concept: str, limit: int = 5) -> list:
         """Get top associations by weight (descending)."""
@@ -547,7 +535,8 @@ class WeightGate:
     def export_compact(self) -> str:
         """Export synapse weights in compact JSON format."""
         compact = {}
-        for concept, assocs in self._synapse._weights.items():
+        for concept in self._synapse.concepts():
+            assocs = self._synapse.get_associations(concept)
             items = {k: round(v, 2) for k, v in assocs.items() if not k.startswith("_")}
             if items:
                 compact[concept] = items
@@ -557,13 +546,14 @@ class WeightGate:
 
     def get_stats(self) -> dict:
         """Get gate statistics."""
+        concepts = self._synapse.concepts()
         total_assocs = sum(
-            len([k for k in v if not k.startswith("_")])
-            for v in self._synapse._weights.values()
+            len([k for k in self._synapse.get_associations(c) if not k.startswith("_")])
+            for c in concepts
         )
         return {
             "enabled": self._enabled,
-            "concepts": len(self._synapse._weights),
+            "concepts": len(concepts),
             "total_associations": total_assocs,
             "interactions": self._interactions,
             "file": str(self._path) if self._path else "<shared synapse>",

@@ -136,6 +136,45 @@ class Synapse:
             self._weights[concept] = {}
         self._weights[concept][assoc] = max(0.0, min(1.0, weight))
 
+    def concepts(self) -> list[str]:
+        """List all concept names in the graph."""
+        return list(self._links.keys())
+
+    def has_concept(self, concept: str) -> bool:
+        """Check if a concept exists in the graph."""
+        return concept in self._links
+
+    def get_associations(self, concept: str) -> dict[str, float]:
+        """Get all associations for a concept with their weights.
+
+        Returns empty dict if concept doesn't exist.
+        """
+        return dict(self._weights.get(concept, {}))
+
+    def remove_concept(self, concept: str) -> bool:
+        """Remove a concept and all its bidirectional links.
+
+        Returns True if concept was found and removed.
+        """
+        if concept not in self._links:
+            return False
+
+        # Remove bidirectional references from neighbors
+        for neighbor in list(self._links.get(concept, [])):
+            if concept in self._links.get(neighbor, []):
+                self._links[neighbor].remove(concept)
+            if concept in self._weights.get(neighbor, {}):
+                del self._weights[neighbor][concept]
+            if concept in self._frequencies.get(neighbor, {}):
+                del self._frequencies[neighbor][concept]
+
+        # Remove the concept itself
+        del self._links[concept]
+        self._weights.pop(concept, None)
+        self._frequencies.pop(concept, None)
+        self._metadata.pop(concept, None)
+        return True
+
     def strengthen(self, concept: str, assoc: str, boost: float = 0.1) -> float:
         """Strengthen an association by boosting its weight.
 
