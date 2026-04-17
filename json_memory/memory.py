@@ -9,6 +9,13 @@ import time
 from typing import Any, Optional, Union
 
 
+class _Missing:
+    """Sentinel for get() default — distinguishes 'not found' from 'found None'."""
+    pass
+
+_MISSING = _Missing()
+
+
 class Memory:
     """Hierarchical JSON memory with dotted-path access.
 
@@ -33,7 +40,16 @@ class Memory:
     # ── Core Access ───────────────────────────────────────────────
 
     def get(self, path: str, default: Any = None) -> Any:
-        """Get a value by dotted path. Example: ``mem.get("bot.binance.rst")``"""
+        """Get a value by dotted path. Example: ``mem.get("bot.binance.rst")``
+
+        Returns default if path doesn't exist. To distinguish 'not found'
+        from 'found None', pass a custom sentinel:
+
+            _SENTINEL = object()
+            result = mem.get("key", _SENTINEL)
+            if result is _SENTINEL:
+                ...  # path doesn't exist
+        """
         keys = path.split(".")
         node = self._data
         for key in keys:
@@ -87,8 +103,12 @@ class Memory:
         return False
 
     def has(self, path: str) -> bool:
-        """Check if a dotted path exists."""
-        return self.get(path) is not None
+        """Check if a dotted path exists.
+
+        Returns True even if the value is None — distinguishes
+        'path exists with value None' from 'path doesn't exist'.
+        """
+        return self.get(path, _MISSING) is not _MISSING
 
     def keys(self, path: str = "") -> list:
         """List keys at a given path (or root if empty)."""
@@ -204,8 +224,8 @@ class Memory:
     # ── Dunder ────────────────────────────────────────────────────
 
     def __getitem__(self, path: str) -> Any:
-        result = self.get(path)
-        if result is None:
+        result = self.get(path, _MISSING)
+        if result is _MISSING:
             raise KeyError(path)
         return result
 
