@@ -27,6 +27,14 @@ Usage:
     # Or use as context manager (auto-saves on exit)
     with WeightGate("/path/to/synapse.json") as gate:
         gate.process_conversation(user_msg, agent_response)
+
+Stemming:
+    Three layers (union of all candidates):
+    1. Dictionary — 150+ root families for reliable matching
+    2. snowballstemmer — optional dep, Porter algorithm for unknown words
+    3. Suffix rules — built-in fallback when snowball unavailable
+
+    pip install json-memory[stem]   # adds snowballstemmer (~200KB)
 """
 
 import json
@@ -37,29 +45,25 @@ from typing import Optional, Union
 
 from .synapse import Synapse
 
-# ── Tokenization & Stemming ─────────────────────────────────────────
-# Two-layer stemmer: dictionary lookup for known words, suffix rules for unknown.
-# Generates a *set* of candidate root forms per word — if any candidate overlaps,
-# the match succeeds. This avoids false negatives from imperfect stemming.
-#
-# LIMITATION: This is a heuristic stemmer, not a linguistic one. It handles
-# English morphology reasonably well for code/technical domains but will fail
-# on irregular verbs (ran→run, went→go), rare derivations, and non-English words.
-# For production NLP, use nltk.stem.PorterStemmer (pip install nltk).
+# ── Optional: snowballstemmer (Porter2 algorithm, ~200KB) ───────────
+try:
+    import snowballstemmer as _snowball
+    _SNOWBALL = _snowball.stemmer("english")
+    HAS_SNOWBALL = True
+except ImportError:
+    _SNOWBALL = None
+    HAS_SNOWBALL = False
 
 # ── Layer 1: Dictionary — known variant → root mappings ─────────────
-# Covers the most common technical/English words where suffix rules fail.
-# Add entries here for domain-specific terms that need reliable stemming.
+# Covers irregular verbs, technical terms, and common derivations
+# where Porter/suffix rules produce unusable stems.
+# e.g., "configuration" → "configur" (Porter) vs "config" (dict)
 
 _COMMON_ROOTS: dict[str, str] = {}
 
-def _build_root_map() -> dict[str, str]:
-    """Build reverse lookup: word_variant → canonical root.
 
-    Each entry maps a common variant to its root. The root itself is always
-    included as a candidate (identity mapping).
-    """
-    # Grouped by root word — each group maps variants to their shared root
+def _build_root_map() -> dict[str, str]:
+    """Build reverse lookup: word_variant → canonical root."""
     root_families = [
         # -tion family (worst offenders with suffix rules)
         ("config", "configuration", "configurations", "configuring", "configured"),
@@ -108,13 +112,15 @@ def _build_root_map() -> dict[str, str]:
         ("specif", "specific", "specifically", "specification", "specifications"),
         ("automat", "automatic", "automatically", "automation", "automate", "automated"),
         ("probabl", "probably", "probability"),
-        ("gener", "general", "generally", "generate", "generating", "generated", "generator", "generators"),
+        ("gener", "general", "generally", "generate", "generating", "generated",
+         "generator", "generators"),
 
-        # -ing family (irregular cases)
+        # -ing / -ed family (irregular cases)
+        ("debug", "debugging", "debugged", "debugger"),
+        ("run", "running", "runner", "ran", "runs"),
         ("log", "logging", "logged", "logger", "logs"),
         ("test", "testing", "tested", "tester", "tests"),
         ("build", "building", "builder", "builds"),
-        ("deploy", "deploying", "deployed", "deployment"),
         ("monitor", "monitoring", "monitored"),
         ("trigger", "triggering", "triggered", "triggers"),
         ("stream", "streaming", "streamed", "streams"),
@@ -129,14 +135,12 @@ def _build_root_map() -> dict[str, str]:
         ("updat", "updating", "updated", "updates"),
         ("creati", "creating", "created", "creation", "creative"),
 
-        # -ed family (irregular)
-        ("debug", "debugging", "debugged", "debugger"),
+        # Irregular verbs (Porter can't handle these)
         ("run", "running", "runner", "ran", "runs"),
-        ("break", "breaking", "broken", "breaks"),
+        ("break", "breaking", "broken", "breaks", "broke"),
         ("mak", "making", "made", "makes", "maker"),
-        ("tak", "taking", "taken", "takes"),
-        ("com", "coming", "came", "comes"),
-        ("giv", "giving", "given", "gives"),
+        ("tak", "taking", "taken", "takes", "took"),
+        ("giv", "giving", "given", "gives", "gave"),
         ("find", "finding", "found", "finds"),
         ("get", "getting", "gets", "got"),
         ("set", "setting", "sets"),
@@ -149,8 +153,10 @@ def _build_root_map() -> dict[str, str]:
         ("write", "writing", "written", "wrote", "writes"),
         ("speak", "speaking", "spoken", "spoke", "speaks"),
         ("drive", "driving", "driven", "drove", "drives"),
+        ("read", "reading", "reads"),
+        ("com", "coming", "came", "comes"),
 
-        # -s / plural family
+        # -s / plural / common technical terms
         ("bot", "bots"),
         ("token", "tokens"),
         ("signal", "signals"),
@@ -174,9 +180,8 @@ def _build_root_map() -> dict[str, str]:
         ("messag", "message", "messages", "messaging", "messaged"),
         ("command", "commands", "commanding", "commanded"),
         ("script", "scripts", "scripting", "scripted"),
-        ("config", "configs", "configuration", "configurations", "configuring", "configured"),
         ("instal", "install", "installation", "installing", "installed"),
-        ("depend", "dependency", "dependencies", "dependent", "depending", "depended"),
+        ("depend", "dependency", "dependencies", "dependent", "depending"),
         ("file", "files", "filing", "filed"),
         ("path", "paths"),
         ("direct", "directory", "directories", "direction", "directions"),
@@ -188,8 +193,7 @@ def _build_root_map() -> dict[str, str]:
         ("stor", "store", "storage", "storing", "stored"),
         ("load", "loading", "loaded", "loader", "loads"),
         ("sav", "save", "saving", "saved", "saves"),
-        ("read", "reading", "reader", "reads"),
-        ("writ", "write", "writing", "writer", "writes", "written"),
+        ("write", "writing", "written", "wrote", "writes", "writer"),
     ]
 
     mapping = {}
@@ -200,16 +204,15 @@ def _build_root_map() -> dict[str, str]:
             mapping[variant] = root
     return mapping
 
+
 _COMMON_ROOTS = _build_root_map()
 
-# ── Layer 2: Suffix rules — applied when dictionary misses ──────────
+# ── Layer 2: Suffix rules — fallback when snowball unavailable ──────
 # Order matters: longest/most specific suffixes first.
-# These are fallback heuristics — the dictionary handles known words.
 
 _SUFFIX_RULES = [
-    # (suffix_to_strip, replacement)
     ("ational", "ate"),    # operational → operate
-    ("tional", "te"),      # functional → functe (imperfect but better than "funct")
+    ("tional", "te"),      # functional → functe
     ("fulness", "ful"),    # helpfulness → helpful
     ("ousness", "ous"),    # dangerousness → dangerous
     ("iveness", "ive"),    # effectiveness → effective
@@ -218,32 +221,29 @@ _SUFFIX_RULES = [
     ("lessly", "less"),    # endlessly → endless
     ("ically", "ic"),      # technically → technic
     ("ality", "al"),       # functionality → functional
-    ("ously", "ous"),      # previously → prevous
     ("ities", "ity"),      # activities → activity
     ("ments", "ment"),     # deployments → deployment
-    ("ments", ""),         # deployments → deploy (also try)
-    ("ities", ""),         # activities → activ (also try)
     ("ness", ""),          # readiness → ready (imperfect)
-    ("tion", ""),          # configuration → configura (imperfect — dictionary covers this)
-    ("sion", ""),          # compression → compres (imperfect)
+    ("tion", ""),          # configuration → configura
+    ("sion", ""),          # compression → compres
     ("ment", ""),          # deployment → deploy
     ("ally", "al"),        # technically → technical
-    ("ing", ""),           # running → runn (dictionary handles common cases)
+    ("ing", ""),           # running → runn (consonant doubling helps)
     ("ies", "y"),          # strategies → strategy
     ("ied", "y"),          # modified → modify
     ("ers", "er"),         # traders → trader
     ("est", ""),           # fastest → fast
     ("ful", ""),           # helpful → help
-    ("ive", ""),           # active → act (imperfect)
-    ("ent", ""),           # current → curr (imperfect)
-    ("ant", ""),           # trading → trad (imperfect)
-    ("ion", ""),           # prediction → predict (imperfect)
-    ("ed", ""),            # debugged → debugg (consonant doubling handles this)
+    ("ive", ""),           # active → act
+    ("ent", ""),           # current → curr
+    ("ant", ""),           # trading → trad
+    ("ion", ""),           # prediction → predict
+    ("ed", ""),            # debugged → debugg (consonant doubling helps)
     ("ly", ""),            # quickly → quick
-    ("er", ""),            # trader → trad (imperfect)
+    ("er", ""),            # trader → trad
     ("es", ""),            # watches → watch
-    ("al", ""),            # technical → technic (imperfect)
-    ("en", ""),            # broken → brok (imperfect)
+    ("al", ""),            # technical → technic
+    ("en", ""),            # broken → brok
     ("s", ""),             # bots → bot
 ]
 
@@ -251,9 +251,10 @@ _SUFFIX_RULES = [
 def _candidates(word: str) -> set[str]:
     """Generate all plausible root forms of a word.
 
-    Two-layer approach:
+    Three-layer approach (all unioned):
     1. Dictionary lookup for known words (covers irregular + common cases)
-    2. Suffix stripping as fallback for unknown words
+    2. snowballstemmer if installed (Porter2 — good general coverage)
+    3. Suffix rules as fallback (built-in, no deps)
 
     Returns original word + all plausible stems. Multiple candidates
     increase match probability without false positives.
@@ -268,7 +269,13 @@ def _candidates(word: str) -> set[str]:
     if len(word) <= 3:
         return result
 
-    # Layer 2: Suffix rules — heuristic fallback
+    # Layer 2: snowballstemmer (Porter2) — optional
+    if _SNOWBALL is not None:
+        stemmed = _SNOWBALL.stemWord(word)
+        if len(stemmed) >= 3 and stemmed != word:
+            result.add(stemmed)
+
+    # Layer 3: Suffix rules — built-in fallback
     for suffix, replacement in _SUFFIX_RULES:
         if word.endswith(suffix):
             stem = word[:-len(suffix)] + replacement
@@ -410,10 +417,10 @@ class WeightGate:
     def process_input(self, text: str) -> dict:
         """Process user input — detect concepts and update weights.
 
-        Uses word-boundary tokenization + suffix stemming to detect
+        Uses word-boundary tokenization + multi-layer stemming to detect
         concepts and associations. Avoids false positives from substring
         matching (e.g., "debug" won't match "debugging" as substring —
-        it matches via stem "debug").
+        it matches via shared root "debug").
 
         If gate is disabled, returns empty dict (no-op).
         """
@@ -446,7 +453,7 @@ class WeightGate:
     def process_output(self, text: str) -> dict:
         """Process agent output — strengthen concepts that were actually used.
 
-        Uses word-boundary tokenization + suffix stemming for detection.
+        Uses word-boundary tokenization + multi-layer stemming for detection.
         If gate is disabled, returns empty dict (no-op).
         """
         if not self._enabled:
@@ -497,18 +504,14 @@ class WeightGate:
     def remove_concept(self, concept: str) -> bool:
         """Remove a concept and all its links. Returns True if found."""
         if concept in self._synapse._weights:
-            # Remove from all neighbor link lists
             for neighbor in list(self._synapse._links.get(concept, [])):
                 if concept in self._synapse._links.get(neighbor, []):
                     self._synapse._links[neighbor].remove(concept)
-                if neighbor in self._synapse._weights.get(concept, {}):
-                    pass  # will be deleted below
                 if concept in self._synapse._weights.get(neighbor, {}):
                     del self._synapse._weights[neighbor][concept]
                 if concept in self._synapse._frequencies.get(neighbor, {}):
                     del self._synapse._frequencies[neighbor][concept]
 
-            # Remove the concept itself
             del self._synapse._links[concept]
             del self._synapse._weights[concept]
             del self._synapse._frequencies[concept]
