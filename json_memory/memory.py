@@ -214,7 +214,7 @@ class Memory:
         """Return memory statistics."""
         exported = self.export()
         return {
-            "leaf_count": len(self.paths()),
+            "entries": len(self.paths()),
             "chars_used": len(exported),
             "chars_max": self.max_chars,
             "chars_free": self.max_chars - len(exported),

@@ -11,7 +11,7 @@ class TestMemory:
     def test_create_empty(self):
         mem = Memory(max_chars=500)
         assert mem.export() == "{}"
-        assert mem.stats()["leaf_count"] == 0
+        assert mem.stats()["entries"] == 0
 
     def test_set_and_get(self):
         mem = Memory()
@@ -133,7 +133,7 @@ class TestMemory:
         mem = Memory(max_chars=1000)
         mem.set("x", 1)
         stats = mem.stats()
-        assert stats["leaf_count"] == 1
+        assert stats["entries"] == 1
         assert stats["chars_used"] > 0
         assert stats["chars_max"] == 1000
 
