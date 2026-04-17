@@ -38,49 +38,237 @@ from typing import Optional, Union
 from .synapse import Synapse
 
 # ── Tokenization & Stemming ─────────────────────────────────────────
-# Simple suffix-based stemmer for English word variants.
-# Handles plurals, gerunds, past tense, and common derivations.
-# Not a full NLP stemmer — just enough to prevent false substring matches.
+# Two-layer stemmer: dictionary lookup for known words, suffix rules for unknown.
+# Generates a *set* of candidate root forms per word — if any candidate overlaps,
+# the match succeeds. This avoids false negatives from imperfect stemming.
+#
+# LIMITATION: This is a heuristic stemmer, not a linguistic one. It handles
+# English morphology reasonably well for code/technical domains but will fail
+# on irregular verbs (ran→run, went→go), rare derivations, and non-English words.
+# For production NLP, use nltk.stem.PorterStemmer (pip install nltk).
+
+# ── Layer 1: Dictionary — known variant → root mappings ─────────────
+# Covers the most common technical/English words where suffix rules fail.
+# Add entries here for domain-specific terms that need reliable stemming.
+
+_COMMON_ROOTS: dict[str, str] = {}
+
+def _build_root_map() -> dict[str, str]:
+    """Build reverse lookup: word_variant → canonical root.
+
+    Each entry maps a common variant to its root. The root itself is always
+    included as a candidate (identity mapping).
+    """
+    # Grouped by root word — each group maps variants to their shared root
+    root_families = [
+        # -tion family (worst offenders with suffix rules)
+        ("config", "configuration", "configurations", "configuring", "configured"),
+        ("predict", "prediction", "predictions", "predicting", "predicted", "predictive"),
+        ("compress", "compression", "compressions", "compressing", "compressed"),
+        ("decompress", "decompression", "decompressing", "decompressed"),
+        ("connect", "connection", "connections", "connecting", "connected", "connective"),
+        ("construct", "construction", "constructing", "constructed", "constructive"),
+        ("detect", "detection", "detections", "detecting", "detected"),
+        ("direct", "direction", "directions", "directing", "directed", "directive"),
+        ("execut", "execution", "executions", "executing", "executed", "executive"),
+        ("extract", "extraction", "extracting", "extracted"),
+        ("inject", "injection", "injecting", "injected"),
+        ("inspect", "inspection", "inspecting", "inspected"),
+        ("interact", "interaction", "interactions", "interacting", "interactive"),
+        ("interrupt", "interruption", "interrupting", "interrupted"),
+        ("operat", "operation", "operations", "operating", "operated", "operative"),
+        ("process", "processing", "processed", "processor", "processes"),
+        ("produc", "production", "producing", "produced", "productive"),
+        ("reduc", "reduction", "reducing", "reduced"),
+        ("select", "selection", "selecting", "selected", "selective"),
+        ("solut", "solution", "solutions"),
+        ("transact", "transaction", "transactions"),
+        ("transform", "transformation", "transforming", "transformed"),
+
+        # -ment family
+        ("deploy", "deployment", "deployments", "deploying", "deployed"),
+        ("develop", "development", "developing", "developed"),
+        ("environ", "environment", "environments"),
+        ("manage", "management", "managing", "managed", "manager"),
+        ("require", "requirement", "requirements", "requiring", "required"),
+        ("replace", "replacement", "replacing", "replaced"),
+        ("state", "statement", "statements"),
+
+        # -ness / -ity family
+        ("ready", "readiness"),
+        ("happi", "happiness", "happy"),
+        ("effectiv", "effectiveness", "effective", "effectively"),
+        ("activ", "activity", "activities", "active", "actively"),
+        ("respons", "responsibility", "responsible", "response", "responses"),
+
+        # -ly family
+        ("quick", "quickly"),
+        ("basic", "basically"),
+        ("technic", "technical", "technically", "technique", "techniques"),
+        ("specif", "specific", "specifically", "specification", "specifications"),
+        ("automat", "automatic", "automatically", "automation", "automate", "automated"),
+        ("probabl", "probably", "probability"),
+        ("gener", "general", "generally", "generate", "generating", "generated", "generator", "generators"),
+
+        # -ing family (irregular cases)
+        ("log", "logging", "logged", "logger", "logs"),
+        ("test", "testing", "tested", "tester", "tests"),
+        ("build", "building", "builder", "builds"),
+        ("deploy", "deploying", "deployed", "deployment"),
+        ("monitor", "monitoring", "monitored"),
+        ("trigger", "triggering", "triggered", "triggers"),
+        ("stream", "streaming", "streamed", "streams"),
+        ("parse", "parsing", "parsed", "parser"),
+        ("search", "searching", "searched", "searches"),
+        ("match", "matching", "matched", "matches", "matcher"),
+        ("filter", "filtering", "filtered", "filters"),
+        ("transform", "transforming", "transformed", "transformation"),
+        ("convert", "converting", "converted", "conversion"),
+        ("insert", "inserting", "inserted"),
+        ("delet", "deleting", "deleted", "deletion"),
+        ("updat", "updating", "updated", "updates"),
+        ("creati", "creating", "created", "creation", "creative"),
+
+        # -ed family (irregular)
+        ("debug", "debugging", "debugged", "debugger"),
+        ("run", "running", "runner", "ran", "runs"),
+        ("break", "breaking", "broken", "breaks"),
+        ("mak", "making", "made", "makes", "maker"),
+        ("tak", "taking", "taken", "takes"),
+        ("com", "coming", "came", "comes"),
+        ("giv", "giving", "given", "gives"),
+        ("find", "finding", "found", "finds"),
+        ("get", "getting", "gets", "got"),
+        ("set", "setting", "sets"),
+        ("put", "putting", "puts"),
+        ("go", "going", "gone", "went", "goes"),
+        ("do", "doing", "done", "did", "does"),
+        ("see", "seeing", "seen", "saw", "sees"),
+        ("know", "knowing", "known", "knew", "knows"),
+        ("think", "thinking", "thought", "thinks"),
+        ("write", "writing", "written", "wrote", "writes"),
+        ("speak", "speaking", "spoken", "spoke", "speaks"),
+        ("drive", "driving", "driven", "drove", "drives"),
+
+        # -s / plural family
+        ("bot", "bots"),
+        ("token", "tokens"),
+        ("signal", "signals"),
+        ("strateg", "strategy", "strategies"),
+        ("analys", "analysis", "analyses", "analyze", "analyzing", "analyzed"),
+        ("memor", "memory", "memories"),
+        ("synaps", "synapse", "synapses"),
+        ("concept", "concepts"),
+        ("weight", "weights", "weighted", "weighting"),
+        ("model", "models", "modeling", "modeled"),
+        ("trade", "trades", "trading", "trader", "traders", "traded"),
+        ("error", "errors", "erroring", "errored"),
+        ("function", "functions", "functional", "functionality"),
+        ("class", "classes"),
+        ("data", "dataset", "datasets", "database"),
+        ("code", "codes", "coding", "coded", "coder"),
+        ("server", "servers"),
+        ("client", "clients"),
+        ("request", "requests", "requesting", "requested"),
+        ("response", "responses", "responding", "responded"),
+        ("messag", "message", "messages", "messaging", "messaged"),
+        ("command", "commands", "commanding", "commanded"),
+        ("script", "scripts", "scripting", "scripted"),
+        ("config", "configs", "configuration", "configurations", "configuring", "configured"),
+        ("instal", "install", "installation", "installing", "installed"),
+        ("depend", "dependency", "dependencies", "dependent", "depending", "depended"),
+        ("file", "files", "filing", "filed"),
+        ("path", "paths"),
+        ("direct", "directory", "directories", "direction", "directions"),
+        ("import", "imports", "importing", "imported"),
+        ("export", "exports", "exporting", "exported"),
+        ("valid", "validate", "validation", "validating", "validated", "validator"),
+        ("serial", "serialize", "serialization", "serializing", "serialized"),
+        ("pars", "parse", "parsing", "parsed", "parser"),
+        ("stor", "store", "storage", "storing", "stored"),
+        ("load", "loading", "loaded", "loader", "loads"),
+        ("sav", "save", "saving", "saved", "saves"),
+        ("read", "reading", "reader", "reads"),
+        ("writ", "write", "writing", "writer", "writes", "written"),
+    ]
+
+    mapping = {}
+    for group in root_families:
+        root = group[0]
+        mapping[root] = root  # identity
+        for variant in group[1:]:
+            mapping[variant] = root
+    return mapping
+
+_COMMON_ROOTS = _build_root_map()
+
+# ── Layer 2: Suffix rules — applied when dictionary misses ──────────
+# Order matters: longest/most specific suffixes first.
+# These are fallback heuristics — the dictionary handles known words.
 
 _SUFFIX_RULES = [
-    # (suffix_to_strip, replacement) — longest first
-    ("ies", "y"),       # strategies → strategy
-    ("tion", ""),       # configuration → configura
-    ("sion", ""),       # compression → compres
-    ("ment", ""),       # deployment → deploy
-    ("ness", ""),       # readiness → ready
-    ("ally", ""),       # technically → technic
-    ("ling", "le"),     # debugging → debugle (fallback)
-    ("ing", ""),        # running → runn, debugged → debugg
-    ("ers", ""),        # traders → trader
-    ("est", ""),        # fastest → fast
-    ("ful", ""),        # helpful → help
-    ("ive", ""),        # active → act
-    ("ent", ""),        # current → curr
-    ("ant", ""),        # trading → trad
-    ("ion", ""),        # prediction → predict
-    ("ied", "y"),       # modified → modify
-    ("ed", ""),         # debugged → debugg
-    ("ly", ""),         # quickly → quick
-    ("er", ""),         # trader → trad
-    ("es", ""),         # watches → watch
-    ("al", ""),         # technical → technic
-    ("en", ""),         # broken → brok
-    ("s", ""),          # bots → bot
+    # (suffix_to_strip, replacement)
+    ("ational", "ate"),    # operational → operate
+    ("tional", "te"),      # functional → functe (imperfect but better than "funct")
+    ("fulness", "ful"),    # helpfulness → helpful
+    ("ousness", "ous"),    # dangerousness → dangerous
+    ("iveness", "ive"),    # effectiveness → effective
+    ("ously", "ous"),      # dangerously → dangerous
+    ("ively", "ive"),      # effectively → effective
+    ("lessly", "less"),    # endlessly → endless
+    ("ically", "ic"),      # technically → technic
+    ("ality", "al"),       # functionality → functional
+    ("ously", "ous"),      # previously → prevous
+    ("ities", "ity"),      # activities → activity
+    ("ments", "ment"),     # deployments → deployment
+    ("ments", ""),         # deployments → deploy (also try)
+    ("ities", ""),         # activities → activ (also try)
+    ("ness", ""),          # readiness → ready (imperfect)
+    ("tion", ""),          # configuration → configura (imperfect — dictionary covers this)
+    ("sion", ""),          # compression → compres (imperfect)
+    ("ment", ""),          # deployment → deploy
+    ("ally", "al"),        # technically → technical
+    ("ing", ""),           # running → runn (dictionary handles common cases)
+    ("ies", "y"),          # strategies → strategy
+    ("ied", "y"),          # modified → modify
+    ("ers", "er"),         # traders → trader
+    ("est", ""),           # fastest → fast
+    ("ful", ""),           # helpful → help
+    ("ive", ""),           # active → act (imperfect)
+    ("ent", ""),           # current → curr (imperfect)
+    ("ant", ""),           # trading → trad (imperfect)
+    ("ion", ""),           # prediction → predict (imperfect)
+    ("ed", ""),            # debugged → debugg (consonant doubling handles this)
+    ("ly", ""),            # quickly → quick
+    ("er", ""),            # trader → trad (imperfect)
+    ("es", ""),            # watches → watch
+    ("al", ""),            # technical → technic (imperfect)
+    ("en", ""),            # broken → brok (imperfect)
+    ("s", ""),             # bots → bot
 ]
 
 
 def _candidates(word: str) -> set[str]:
     """Generate all plausible root forms of a word.
 
-    Returns original word + all suffix-stripped variants.
-    Also handles consonant doubling (debugged → debugg → debug).
+    Two-layer approach:
+    1. Dictionary lookup for known words (covers irregular + common cases)
+    2. Suffix stripping as fallback for unknown words
+
+    Returns original word + all plausible stems. Multiple candidates
+    increase match probability without false positives.
     """
     word = word.lower()
     result = {word}
+
+    # Layer 1: Dictionary — known roots (check even for short words)
+    if word in _COMMON_ROOTS:
+        result.add(_COMMON_ROOTS[word])
+
     if len(word) <= 3:
         return result
 
+    # Layer 2: Suffix rules — heuristic fallback
     for suffix, replacement in _SUFFIX_RULES:
         if word.endswith(suffix):
             stem = word[:-len(suffix)] + replacement
