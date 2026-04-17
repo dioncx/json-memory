@@ -102,15 +102,45 @@ class Memory:
     def merge(self, data: dict, prefix: str = "") -> int:
         """Merge a dict into memory at an optional prefix path.
 
+        Atomic: either all keys merge or none do (rollback on overflow).
         Returns number of keys merged.
+        Raises ValueError if the combined result would exceed max_chars.
         """
+        # Snapshot before any changes
+        snapshot = json.loads(self.export())
+
+        try:
+            # Apply all changes without individual overflow checks
+            count = self._merge_apply(data, prefix)
+
+            # Check budget once for the whole batch
+            if len(self.export()) > self.max_chars:
+                raise ValueError(
+                    f"Memory overflow: merging {count} keys would exceed "
+                    f"{self.max_chars} chars"
+                )
+            return count
+        except ValueError:
+            # Rollback entire batch — all or nothing
+            self._data = snapshot
+            raise
+
+    def _merge_apply(self, data: dict, prefix: str = "") -> int:
+        """Apply merge operations without overflow checks (internal)."""
         count = 0
         for key, value in data.items():
             path = f"{prefix}.{key}" if prefix else key
             if isinstance(value, dict):
-                count += self.merge(value, prefix=path)
+                count += self._merge_apply(value, prefix=path)
             else:
-                self.set(path, value)
+                # Direct write — no snapshot, no overflow check
+                keys = path.split(".")
+                node = self._data
+                for k in keys[:-1]:
+                    if k not in node or not isinstance(node[k], dict):
+                        node[k] = {}
+                    node = node[k]
+                node[keys[-1]] = value
                 count += 1
         return count
 
