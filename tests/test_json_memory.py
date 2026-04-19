@@ -902,3 +902,56 @@ def test_auto_flush_persistence():
     finally:
         if os.path.exists(flush_file):
             os.remove(flush_file)
+
+# ── Phase 7: Enterprise & Concurrency Tests ────────────────────
+
+def test_thread_safety():
+    import threading
+    mem = Memory(max_chars=1000)
+    mem.set("counter", 0)
+    
+    def worker():
+        for _ in range(10):
+            mem.increment("counter")
+            
+    threads = [threading.Thread(target=worker) for _ in range(5)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    
+    assert mem.get("counter") == 50
+
+def test_audit_history():
+    mem = Memory(track_history=True)
+    mem.set("user.name", "Alice")
+    mem.set("user.age", 30)
+    mem.delete("user.name")
+    
+    hist = mem.history()
+    assert len(hist) == 3
+    assert hist[0]["action"] == "set"
+    assert hist[0]["path"] == "user.name"
+    assert hist[0]["value"] == "Alice"
+    assert hist[2]["action"] == "delete"
+    assert hist[2]["path"] == "user.name"
+
+def test_openai_tool_export():
+    schema = Schema({
+        "!user": {
+            "name": "str",
+            "age": "int"
+        },
+        "tasks": ["str"]
+    })
+    
+    tools = schema.to_openai_tools("update_memory", "Update the agent memory")
+    
+    assert len(tools) == 1
+    assert tools[0]["type"] == "function"
+    assert tools[0]["function"]["name"] == "update_memory"
+    
+    params = tools[0]["function"]["parameters"]
+    assert params["type"] == "object"
+    assert "user" in params["properties"]
+    assert "user" in params["required"]
+    assert params["properties"]["tasks"]["type"] == "array"
+    assert params["properties"]["tasks"]["items"]["type"] == "string"

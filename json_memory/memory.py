@@ -5,6 +5,7 @@ Provides dotted-path access to nested JSON data with minified storage.
 """
 
 import re
+import threading
 import json
 import time
 import copy
@@ -37,11 +38,15 @@ class Memory:
     """
 
     def __init__(self, data: Optional[dict] = None, max_chars: int = 2200, 
-                 eviction_policy: str = "error", auto_flush_path: Optional[str] = None):
+                 eviction_policy: str = "error", auto_flush_path: Optional[str] = None,
+                 track_history: bool = False):
         self._data = data or {}
         self.max_chars = max_chars
         self.eviction_policy = eviction_policy
         self.auto_flush_path = auto_flush_path
+        self.track_history = track_history
+        self._lock = threading.RLock()
+        self._audit_log: list[dict] = []
         self._cache: Optional[str] = None
         self._watchers: dict[str, list[tuple[Callable, bool]]] = {}
         self._ttls: dict[str, float] = {}  # full_path -> expires_at
@@ -50,30 +55,27 @@ class Memory:
         
         # Initial access tracking for existing data
         if self._data:
-            for path in self.paths():
-                self._track_access(path)
+            with self._lock:
+                for path in self.paths():
+                    self._track_access(path)
 
     def watch(self, path: str, callback: Callable[[str, Any], None], exact: bool = False) -> "Memory":
-        """Register a callback triggered when path (or sub-path) is modified.
+        """Register a callback triggered when path (or sub-path) is modified."""
+        with self._lock:
+            if path not in self._watchers:
+                self._watchers[path] = []
+            self._watchers[path].append((callback, exact))
+            return self
 
-        Args:
-            path: Dotted path to watch.
-            callback: Function taking (path, new_value).
-            exact: If True, only triggers on this exact path.
-                   If False, triggers on this path and any children.
-        """
-        if path not in self._watchers:
-            self._watchers[path] = []
-        self._watchers[path].append((callback, exact))
-        return self
-
-    def unwatch(self, path: str, callback: Callable) -> "Memory":
-        """Remove a previously registered callback."""
-        if path in self._watchers:
-            self._watchers[path] = [w for w in self._watchers[path] if w[0] != callback]
-            if not self._watchers[path]:
-                del self._watchers[path]
-        return self
+    def unwatch(self, path: str, callback: Optional[Callable] = None) -> "Memory":
+        """Unregister callback(s) for a path."""
+        with self._lock:
+            if path in self._watchers:
+                if callback is None:
+                    del self._watchers[path]
+                else:
+                    self._watchers[path] = [w for w in self._watchers[path] if w[0] != callback]
+            return self
 
     def _trigger_watchers(self, mutated_path: str, value: Any):
         """Internal: dispatch events to watchers."""
@@ -95,25 +97,23 @@ class Memory:
     # ── Core Access ───────────────────────────────────────────────
 
     def get(self, path: str, default: Any = None) -> Any:
-        """Get a value by dotted path. Returns default if not found.
-        
-        Automatically purges and returns default if the key (or a parent) has expired.
-        """
-        expired_path = self._is_expired(path)
-        if expired_path:
-            self.delete(expired_path)
-            return default
-
-        keys = path.split(".")
-        node = self._data
-        for key in keys:
-            if isinstance(node, dict) and key in node:
-                node = node[key]
-            else:
+        """Get a value by dotted path. Returns default if not found."""
+        with self._lock:
+            expired_path = self._is_expired(path)
+            if expired_path:
+                self.delete(expired_path)
                 return default
-        
-        self._track_access(path)
-        return node
+
+            keys = path.split(".")
+            node = self._data
+            for key in keys:
+                if isinstance(node, dict) and key in node:
+                    node = node[key]
+                else:
+                    return default
+            
+            self._track_access(path)
+            return node
 
     def get_or_set(self, path: str, default: Any) -> Any:
         """Get value at path, or set and return default if missing."""
@@ -168,139 +168,145 @@ class Memory:
         return self.batch_get(matches)
 
     def set(self, path: str, value: Any, ttl: Optional[float] = None) -> "Memory":
-        """Set a value by dotted path. Creates intermediate dicts as needed.
-        
-        Args:
-            path: Dotted path to set.
-            value: Value to store.
-            ttl: Optional Time-To-Live in seconds.
-        
-        Returns self to allow chaining.
-        Raises ValueError if it would exceed max_chars (data unchanged).
-        """
-        keys = path.split(".")
+        """Set a value by dotted path. Creates intermediate dicts as needed."""
+        with self._lock:
+            keys = path.split(".")
 
-        # Snapshot current state for rollback
-        snapshot = copy.deepcopy(self._data)
+            # Snapshot current state for rollback
+            snapshot = copy.deepcopy(self._data)
 
-        # Build path and set value
-        node = self._data
-        for key in keys[:-1]:
-            if key not in node or not isinstance(node[key], dict):
-                node[key] = {}
-            node = node[key]
-        node[keys[-1]] = value
+            # Build path and set value
+            node = self._data
+            for key in keys[:-1]:
+                if key not in node or not isinstance(node[key], dict):
+                    node[key] = {}
+                node = node[key]
+            node[keys[-1]] = value
 
-        # Invalidate cache before check
-        self._invalidate()
+            # Invalidate cache before check
+            self._invalidate()
 
-        # Check budget
-        if len(self.export()) > self.max_chars:
-            if self.eviction_policy == "lru":
-                # Get all leaf paths, excluding the one we just set
-                all_paths = [p for p in self.paths() if p != path]
-                # Sort by access time (oldest first)
-                sorted_paths = sorted(all_paths, key=lambda p: self._access_times.get(p, 0))
-                
-                for p in sorted_paths:
-                    if len(self.export()) <= self.max_chars:
-                        break
-                    self.delete(p, prune=True)
-            
-            # Final check - if still too large (or policy is "error")
+            # Check budget
             if len(self.export()) > self.max_chars:
-                # Rollback to snapshot
-                self._data = snapshot
-                self._invalidate()
-                raise ValueError(
-                    f"Memory overflow: setting '{path}' would exceed "
-                    f"{self.max_chars} chars"
-                )
-        
-        if ttl is not None:
-            self._ttls[path] = time.time() + ttl
-        elif path in self._ttls:
-            del self._ttls[path]
+                if self.eviction_policy == "lru":
+                    # Get all leaf paths, excluding the one we just set
+                    all_paths = [p for p in self.paths() if p != path]
+                    # Sort by access time (oldest first)
+                    sorted_paths = sorted(all_paths, key=lambda p: self._access_times.get(p, 0))
+                    
+                    for p in sorted_paths:
+                        if len(self.export()) <= self.max_chars:
+                            break
+                        self.delete(p, prune=True)
+                
+                # Final check - if still too large (or policy is "error")
+                if len(self.export()) > self.max_chars:
+                    # Rollback to snapshot
+                    self._data = snapshot
+                    self._invalidate()
+                    raise ValueError(
+                        f"Memory overflow: setting '{path}' would exceed "
+                        f"{self.max_chars} chars"
+                    )
             
-        self._track_access(path)
-        self._trigger_watchers(path, value)
-        self._auto_flush()
-        return self
+            if ttl is not None:
+                self._ttls[path] = time.time() + ttl
+            elif path in self._ttls:
+                del self._ttls[path]
+                
+            if self.track_history:
+                self._audit_log.append({
+                    "time": time.time(),
+                    "action": "set",
+                    "path": path,
+                    "value": copy.deepcopy(value)
+                })
+
+            self._track_access(path)
+            self._trigger_watchers(path, value)
+            self._auto_flush()
+            return self
 
     def delete(self, path: str, prune: bool = False) -> bool:
-        """Delete a value by dotted path. Returns True if found and deleted.
-
-        Args:
-            path: Dotted path to delete.
-            prune: If True, also remove empty parent dicts along the path.
-        """
-        keys = path.split(".")
-        node = self._data
-        stack = [(None, self._data)]  # (key_in_parent, node)
-        
-        for key in keys[:-1]:
-            if isinstance(node, dict) and key in node:
-                node = node[key]
-                stack.append((key, node))
-            else:
-                return False
-        
-        if keys[-1] in node:
-            del node[keys[-1]]
-            
-            if prune:
-                # Bubble up and remove empty dicts
-                for i in range(len(stack) - 1, 0, -1):
-                    key_to_delete, current_node = stack[i]
-                    parent_node = stack[i-1][1]
-                    if isinstance(current_node, dict) and not current_node:
-                        del parent_node[key_to_delete]
-                    else:
-                        break
-
-            self._invalidate()
-            self._trigger_watchers(path, None)
-            
-            # Remove metadata for this path and all sub-paths
-            pref = path + "."
-            self._ttls = {k: v for k, v in self._ttls.items() 
-                         if k != path and not k.startswith(pref)}
-            self._access_times = {k: v for k, v in self._access_times.items()
-                                 if k != path and not k.startswith(pref)}
-            
-            self._auto_flush()
-            return True
-        return False
-
-    def clear(self, path: str = "") -> "Memory":
-        """Clear memory at a path (or everything if empty)."""
-        if not path:
-            self._data = {}
-        else:
+        """Delete a value by dotted path. Returns True if found and deleted."""
+        with self._lock:
             keys = path.split(".")
             node = self._data
+            stack = [(None, self._data)]  # (key_in_parent, node)
+            
             for key in keys[:-1]:
                 if isinstance(node, dict) and key in node:
                     node = node[key]
+                    stack.append((key, node))
                 else:
-                    return self
-            if keys[-1] in node:
-                node[keys[-1]] = {}
-        
-        self._invalidate()
-        self._trigger_watchers(path, None)
-        
-        if not path:
-            self._ttls = {}
-        else:
-            pref = path + "."
-            self._ttls = {k: v for k, v in self._ttls.items() 
-                         if k != path and not k.startswith(pref)}
-            self._access_times = {k: v for k, v in self._access_times.items()
-                                 if k != path and not k.startswith(pref)}
+                    return False
             
-        self._auto_flush()
-        return self
+            if keys[-1] in node:
+                if self.track_history:
+                    self._audit_log.append({
+                        "time": time.time(),
+                        "action": "delete",
+                        "path": path,
+                        "value": None
+                    })
+
+                del node[keys[-1]]
+                
+                if prune:
+                    # Bubble up and remove empty dicts
+                    for i in range(len(stack) - 1, 0, -1):
+                        key_to_delete, current_node = stack[i]
+                        parent_node = stack[i-1][1]
+                        if isinstance(current_node, dict) and not current_node:
+                            del parent_node[key_to_delete]
+                        else:
+                            break
+
+                self._invalidate()
+                self._trigger_watchers(path, None)
+                
+                # Remove metadata for this path and all sub-paths
+                pref = path + "."
+                self._ttls = {k: v for k, v in self._ttls.items() 
+                             if k != path and not k.startswith(pref)}
+                self._access_times = {k: v for k, v in self._access_times.items()
+                                     if k != path and not k.startswith(pref)}
+                
+                self._auto_flush()
+                return True
+            return False
+
+    def clear(self, path: str = "") -> "Memory":
+        """Clear memory at a path (or everything if empty)."""
+        with self._lock:
+            if not path:
+                self._data = {}
+            else:
+                keys = path.split(".")
+                node = self._data
+                for key in keys[:-1]:
+                    if isinstance(node, dict) and key in node:
+                        node = node[key]
+                    else:
+                        return self
+                if keys[-1] in node:
+                    node[keys[-1]] = {}
+            
+            self._invalidate()
+            self._trigger_watchers(path, None)
+            
+            if not path:
+                self._ttls = {}
+                self._access_times = {}
+            else:
+                pref = path + "."
+                self._ttls = {k: v for k, v in self._ttls.items() 
+                             if k != path and not k.startswith(pref)}
+                self._access_times = {k: v for k, v in self._access_times.items()
+                                     if k != path and not k.startswith(pref)}
+                
+            self._auto_flush()
+            return self
 
     def has(self, path: str) -> bool:
         """Check if a dotted path exists.
@@ -308,7 +314,8 @@ class Memory:
         Returns True even if the value is None — distinguishes
         'path exists with value None' from 'path doesn't exist'.
         """
-        return self.get(path, _MISSING) is not _MISSING
+        with self._lock:
+            return self.get(path, _MISSING) is not _MISSING
 
     def keys(self, path: str = "") -> list:
         """List keys at a given path (or root if empty)."""
@@ -354,22 +361,23 @@ class Memory:
 
     def purge_expired(self) -> int:
         """Explicitly remove all expired keys. Returns count of removed items."""
-        now = time.time()
-        # Sort by path length so parents are deleted before children
-        expired_paths = sorted(
-            [p for p, exp in self._ttls.items() if exp <= now],
-            key=len
-        )
-        count = 0
-        for path in expired_paths:
-            # Check if still there (might have been deleted by a parent already)
-            if self._is_expired(path):
-                self.delete(path)
-                count += 1
-        
-        if count > 0:
-            self._auto_flush()
-        return count
+        with self._lock:
+            now = time.time()
+            # Sort by path length so parents are deleted before children
+            expired_paths = sorted(
+                [p for p, exp in self._ttls.items() if exp <= now],
+                key=len
+            )
+            count = 0
+            for path in expired_paths:
+                # Check if still there (might have been deleted by a parent already)
+                if self._is_expired(path):
+                    self.delete(path)
+                    count += 1
+            
+            if count > 0:
+                self._auto_flush()
+            return count
 
     def _is_expired(self, path: str) -> Optional[str]:
         """Internal: Check if path or any parent path has expired.
@@ -422,41 +430,47 @@ class Memory:
 
     def to_dict(self) -> dict:
         """Return the full memory as a plain dict (excludes metadata like TTLs)."""
-        return copy.deepcopy(self._data)
+        with self._lock:
+            return copy.deepcopy(self._data)
 
     def get_state(self) -> dict:
         """Return the complete state including TTL metadata."""
-        return {
-            "data": copy.deepcopy(self._data),
-            "ttls": copy.deepcopy(self._ttls)
-        }
+        with self._lock:
+            return {
+                "data": copy.deepcopy(self._data),
+                "ttls": copy.deepcopy(self._ttls)
+            }
 
     def set_state(self, state: dict) -> "Memory":
         """Restore memory from a state dict produced by get_state()."""
-        self._data = copy.deepcopy(state.get("data", {}))
-        self._ttls = copy.deepcopy(state.get("ttls", {}))
-        self._invalidate()
-        self._auto_flush()
-        return self
+        with self._lock:
+            self._data = copy.deepcopy(state.get("data", {}))
+            self._ttls = copy.deepcopy(state.get("ttls", {}))
+            self._invalidate()
+            self._auto_flush()
+            return self
 
     def snapshot(self, name: str) -> None:
         """Create a named checkpoint of the current memory state."""
-        self._snapshots[name] = self.get_state()
+        with self._lock:
+            self._snapshots[name] = self.get_state()
 
     def rollback(self, name: str) -> bool:
         """Rollback to a previously saved checkpoint. Returns True if successful."""
-        if name not in self._snapshots:
-            return False
-        self.set_state(self._snapshots[name])
-        self._auto_flush()
-        return True
+        with self._lock:
+            if name not in self._snapshots:
+                return False
+            self.set_state(self._snapshots[name])
+            self._auto_flush()
+            return True
 
     def flush(self) -> None:
         """Manually flush current state to disk if auto_flush_path is set."""
-        if not self.auto_flush_path:
-            return
-        with open(self.auto_flush_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(self.get_state(), indent=2, ensure_ascii=False))
+        with self._lock:
+            if not self.auto_flush_path:
+                return
+            with open(self.auto_flush_path, "w", encoding="utf-8") as f:
+                f.write(json.dumps(self.get_state(), indent=2, ensure_ascii=False))
 
     def _auto_flush(self) -> None:
         """Internal: flush if path is configured."""
@@ -474,16 +488,22 @@ class Memory:
 
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""
-        results = []
-        node = self.get(prefix) if prefix else self._data
-        if isinstance(node, dict):
-            for key, value in node.items():
-                full_path = f"{prefix}.{key}" if prefix else key
-                if isinstance(value, dict):
-                    results.extend(self.paths(full_path))
-                else:
-                    results.append(full_path)
-        return sorted(results)
+        with self._lock:
+            results = []
+            node = self.get(prefix) if prefix else self._data
+            if isinstance(node, dict):
+                for key, value in node.items():
+                    full_path = f"{prefix}.{key}" if prefix else key
+                    if isinstance(value, dict):
+                        results.extend(self.paths(full_path))
+                    else:
+                        results.append(full_path)
+            return sorted(results)
+
+    def history(self) -> list[dict]:
+        """Return a copy of the mutation audit log."""
+        with self._lock:
+            return copy.deepcopy(self._audit_log)
 
     # ── Serialization ─────────────────────────────────────────────
 

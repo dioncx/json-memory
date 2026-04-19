@@ -171,6 +171,49 @@ class Schema:
         """Export schema as JSON string."""
         return json.dumps(self._template, separators=(",", ":"))
 
+    def to_openai_tools(self, name: str, description: str) -> list[dict]:
+        """Convert schema to an OpenAI-compatible tools array."""
+        return [{
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": self._to_json_schema(self._template)
+            }
+        }]
+
+    def _to_json_schema(self, template: Any) -> dict:
+        """Internal: convert template to JSON Schema."""
+        if isinstance(template, dict):
+            properties = {}
+            required = []
+            for k, v in template.items():
+                is_req = k.startswith("!")
+                clean_k = k[1:] if is_req else k
+                properties[clean_k] = self._to_json_schema(v)
+                if is_req:
+                    required.append(clean_k)
+            
+            res = {"type": "object", "properties": properties}
+            if required:
+                res["required"] = required
+            return res
+        
+        if isinstance(template, list):
+            items = self._to_json_schema(template[0]) if template else {"type": "object"}
+            return {"type": "array", "items": items}
+
+        type_map = {
+            "str": "string",
+            "int": "integer",
+            "float": "number",
+            "bool": "boolean",
+            "list": "array",
+            "dict": "object",
+            "any": "object"
+        }
+        return {"type": type_map.get(template, "string")}
+
     def __repr__(self) -> str:
         keys = list(self._template.keys()) if isinstance(self._template, dict) else []
         return f"Schema(keys={keys})"

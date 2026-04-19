@@ -436,3 +436,38 @@ mem = Memory(auto_flush_path="agent_brain.json")
 mem.set("tasks.current", "Analyzing logs...")
 # 'agent_brain.json' is updated immediately.
 ```
+
+## Enterprise Features (Ph. 7)
+
+### Thread-Safety
+Running a multi-threaded swarm? `json-memory` uses `threading.RLock` to ensure that concurrent reads/writes never corrupt your state.
+
+```python
+# Shared memory across 50 threads is 100% safe
+mem = Memory()
+```
+
+### Mutation History (Audit Trail)
+Track exactly how your agent's memory changed over time. Perfect for debugging hallucinations or tracing decision-making logic.
+
+```python
+mem = Memory(track_history=True)
+mem.set("plan", "Step 1: Get coffee")
+
+# View the full log of changes
+for event in mem.history():
+    print(f"[{event['time']}] {event['action']} {event['path']} -> {event['value']}")
+```
+
+### OpenAI Tool Integration
+Instantly turn your schema into a tool definition for `gpt-4o`, `gpt-4-turbo`, or `claude-3.5-sonnet`.
+
+```python
+schema = Schema({
+    "!bio": "str",
+    "preferences": ["str"]
+})
+
+# Get the JSON array for OpenAI API 'tools' parameter
+tools = schema.to_openai_tools("update_memory", "Update the agent's internal profile")
+```
