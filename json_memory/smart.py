@@ -22,6 +22,7 @@ from collections import Counter
 
 from .memory import Memory
 from .synapse import Synapse
+from .concept_map import expand_query_semantic, get_concept_category
 
 
 # ── Auto-Extractor Patterns ───────────────────────────────────────────
@@ -47,10 +48,10 @@ EXTRACTION_PATTERNS = [
 
 
 def _normalize_tokens(text: str) -> set[str]:
-    """Split text into lowercase tokens for matching. Includes synonym expansion."""
+    """Split text into lowercase tokens for matching. Includes synonym + semantic expansion."""
     tokens = set(re.findall(r'\b\w{3,}\b', text.lower()))
 
-    # Synonym expansion: add related tokens for better recall
+    # Basic synonym expansion
     synonyms = {
         'who': {'name', 'user', 'identity'},
         'me': {'user', 'name'},
@@ -64,8 +65,6 @@ def _normalize_tokens(text: str) -> set[str]:
         'exchange': {'exchange', 'bot', 'binance'},
         'timezone': {'timezone', 'gmt', 'utc'},
         'time': {'timezone', 'gmt', 'utc'},
-        'live': {'location', 'city'},
-        'live': {'location'},
         'location': {'location', 'city', 'country'},
     }
 
@@ -73,6 +72,9 @@ def _normalize_tokens(text: str) -> set[str]:
     for token in tokens:
         if token in synonyms:
             expanded.update(synonyms[token])
+
+    # Semantic expansion (concept map)
+    expanded = expand_query_semantic(expanded)
 
     return expanded
 
@@ -414,6 +416,7 @@ class SmartMemory:
         """Passively extract and store facts from conversation.
 
         Detects factual statements without explicit remember() calls.
+        Auto-logs conversation episodes for timeline recall.
         Returns list of extracted facts for review.
 
         Args:
@@ -460,7 +463,54 @@ class SmartMemory:
                     if existing != value:
                         self.remember(path, value, tags=['auto_extracted'])
 
+        # Auto-detect topic and log episode (passive — no manual call needed)
+        topic = self._detect_topic(text)
+        if topic:
+            related_paths = [e['path'] for e in extracted] if extracted else []
+            summary = self._summarize_turn(user_msg, agent_msg)
+            self.log_episode(topic, summary=summary, paths=related_paths)
+
+        # Advance turn counter
+        self.advance_turn()
+
         return extracted
+
+    def _detect_topic(self, text: str) -> str | None:
+        """Detect the dominant topic from conversation text.
+
+        Uses token matching against known topic categories.
+        Returns the topic string or None if unclear.
+        """
+        tokens = set(re.findall(r'\w{3,}', text.lower()))
+
+        # Score each known topic category
+        topic_scores = {}
+        for token in tokens:
+            category = get_concept_category(token)
+            if category:
+                topic_scores[category] = topic_scores.get(category, 0) + 1
+
+        if not topic_scores:
+            # Fallback: check against existing memory paths
+            for token in tokens:
+                for path in self.mem.paths():
+                    if token in path.lower():
+                        topic_scores[token] = topic_scores.get(token, 0) + 1
+
+        if topic_scores:
+            best_topic = max(topic_scores, key=topic_scores.get)
+            if topic_scores[best_topic] >= 2:  # at least 2 matches
+                return best_topic
+
+        return None
+
+    def _summarize_turn(self, user_msg: str, agent_msg: str = None) -> str:
+        """Create a brief summary of the conversation turn for episode logging."""
+        # Truncate to first meaningful sentence
+        msg = user_msg.strip().split('.')[0].split('\n')[0]
+        if len(msg) > 80:
+            msg = msg[:77] + "..."
+        return msg
 
     def _infer_path(self, value: str) -> str:
         """Try to infer a good dotted path from the value content."""
@@ -539,9 +589,9 @@ class SmartMemory:
                 summary_overlap = len(topic_tokens & summary_tokens) / max(len(topic_tokens), 1)
                 score = max(overlap, summary_overlap * 0.5)
                 if score > 0:
-                    scored.append((score, ep))
+                    scored.append((score, ep['timestamp'], ep))
             scored.sort(reverse=True)
-            return [ep for _, ep in scored[:limit]]
+            return [ep for _, _, ep in scored[:limit]]
 
         # No topic filter: return most recent
         candidates.sort(key=lambda ep: ep['timestamp'], reverse=True)
@@ -843,24 +893,34 @@ class SmartMemory:
         """Load episodic memory from disk."""
         if self._episodes_path.exists():
             try:
-                self._episodes = json.loads(self._episodes_path.read_text(encoding='utf-8'))
-                # Rebuild active topics from recent episodes
-                recent = sorted(self._episodes, key=lambda e: e.get('timestamp', 0), reverse=True)
-                seen = set()
-                for ep in recent[:10]:
-                    topic = ep.get('topic', '').lower()
-                    if topic and topic not in seen:
-                        seen.add(topic)
-                        self._active_topics.append(topic)
+                data = json.loads(self._episodes_path.read_text(encoding='utf-8'))
+                self._episodes = data.get('episodes', data) if isinstance(data, dict) else data
+
+                # Load persistent active topics
+                if isinstance(data, dict) and 'active_topics' in data:
+                    self._active_topics = data['active_topics'][:10]
+                else:
+                    # Rebuild from recent episodes
+                    recent = sorted(self._episodes, key=lambda e: e.get('timestamp', 0), reverse=True)
+                    seen = set()
+                    for ep in recent[:10]:
+                        topic = ep.get('topic', '').lower()
+                        if topic and topic not in seen:
+                            seen.add(topic)
+                            self._active_topics.append(topic)
             except Exception:
                 self._episodes = []
 
     def _save_episodes(self):
-        """Persist episodic memory to disk."""
+        """Persist episodic memory and active topics to disk."""
         try:
             self._episodes_path.parent.mkdir(parents=True, exist_ok=True)
+            data = {
+                'episodes': self._episodes,
+                'active_topics': self._active_topics[:10],
+            }
             self._episodes_path.write_text(
-                json.dumps(self._episodes, ensure_ascii=False), encoding='utf-8'
+                json.dumps(data, ensure_ascii=False), encoding='utf-8'
             )
         except Exception:
             pass
