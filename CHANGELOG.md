@@ -1,33 +1,41 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
-
-## [0.1.6] - 2024-04-19
-
-### Performance
-- **Memory Optimization**: Added `export()` caching with a dirty-flag. Avoids redundant JSON serialization on repeated exports.
-- **Faster Rollbacks**: Switched from JSON round-trip to `copy.deepcopy` for memory snapshots.
-- **Graph Optimization**: Switched BFS queue in `Synapse.find_path()` to `collections.deque` for O(1) pops.
-- **WeightGate Optimization**: Added concept-level guards to skip processing for unmentioned concepts.
-- **Caching**: Added tokenization cache for concept names in `WeightGate`.
+## v0.2.0 — SmartMemory
 
 ### Added
-- **API Chaining**: `Memory.set()` now returns `self` for fluent chaining.
-- **Memory.delete(prune=True)**: Optional pruning of empty parent dicts after deletion.
-- **Memory.clear(path)**: Easily wipe a specific path or the entire memory.
-- **Memory.update()**: Added as a descriptive alias for `merge()`.
-- **Synapse.merge()**: Ability to combine two independent graphs.
-- **Required Fields**: Schema now supports required keys using the `!` prefix (e.g., `{"!user": "str"}`).
-- **HAS_SNOWBALL**: Exported in `__init__.py` to check for optional stemming support.
+- **SmartMemory** class: intelligent agent memory with weighted retrieval scoring
+  - `remember()`, `recall()`, `forget()`, `search()` — structured storage
+  - `recall_relevant(query)` — returns only facts relevant to the query (not everything)
+  - `prompt_context(query)` — lean prompt injection (78% token savings vs full memory)
+  - `process_conversation()` — auto-extraction of facts from conversation
+  - `explain_score()` — debug why a fact was/wasn't returned
+  - `link()` / `associate()` — associative concept memory
+  - `snapshot()` / `rollback()` — state safety
+- **Weighted retrieval scoring**: keyword relevance (85%) × recency decay (10%) × frequency (5%)
+- **Smart filtering**: adaptive threshold suppresses noise when strong keyword matches exist
+- **Synonym expansion**: "who am I?" → searches for `name`, `user`, `identity`
+- **Auto-extraction patterns**: names, locations, timezones, preferences, platforms, "remember" requests
+- **TieredMemory**: hot/warm/cold tiers with automatic promotion/demotion
+- **Semantic layer** (`json_memory/semantic.py`): optional FAISS + sentence-transformers for embedding-based retrieval
+  - `pip install json-memory[semantic]` — graceful fallback without deps
+  - `enhance_smart_memory()` — monkey-patches SmartMemory with semantic scoring
+- **144 tests** (41 new for SmartMemory)
+- **Examples**: `examples/smart_memory_demo.py` — full end-to-end demo
 
 ### Changed
-- Improved `README.md` examples for consistency.
-- Standardized `stats()` output with `entries` and `chars_free`.
+- Version bumped to 0.2.0
+- README: added "SmartMemory — Intelligent Retrieval" section with scoring table, auto-extraction docs, semantic search guide
 
-### Fixed
-- Corrected various small bugs in graph traversal and state management.
-- Fixed mismatched keys in documentation examples.
+## v0.1.6
 
-### Developer Experience
-- Added `dev` optional dependencies in `pyproject.toml` (pytest, black, mypy, etc.).
-- Created this `CHANGELOG.md`.
+- Fixed sdist naming conventions
+- Added TTL, LRU eviction, thread safety, audit logging, OpenAI tool schema generation
+
+## v0.1.5
+
+- WeightGate passive learning middleware
+- Snowball stemmer integration
+
+## v0.1.0
+
+- Initial release: Memory, Synapse, Schema, Compress

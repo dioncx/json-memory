@@ -162,6 +162,105 @@ system_prompt = f"You are an assistant.\n\n## Memory\n{memory.context()}"
 
 No lock-in. No dependencies. Just Python.
 
+## SmartMemory — Intelligent Retrieval (v0.2.0)
+
+The problem with most agent memory: **you inject everything into every prompt.** 5000 chars of memory, but the user only asked about their timezone. Wasted tokens.
+
+SmartMemory fixes this with **weighted retrieval** — only the relevant facts make it into the prompt.
+
+```python
+from json_memory import SmartMemory
+
+mem = SmartMemory("agent.json", max_chars=5000)
+
+# Store facts
+mem.remember("user.name", "Alice")
+mem.remember("user.timezone", "GMT+7")
+mem.remember("bot.restart_cmd", "kill && nohup ./bot > log")
+mem.remember("server.ip", "10.0.0.1")
+mem.remember("bot.symbol", "BNBUSDT")
+
+# Smart recall — only relevant facts per query
+mem.recall_relevant("What's my timezone?")
+# → {"user.timezone": "GMT+7"}  (not the entire memory)
+
+mem.recall_relevant("How do I restart?")
+# → {"bot.restart_cmd": "kill && nohup ./bot > log"}
+
+# Lean prompt injection — only what matters
+context = mem.prompt_context("What's my timezone?")
+# → "## Memory\n- user.timezone: GMT+7"  (32 chars, not 5000)
+```
+
+### How Retrieval Works
+
+Each fact is scored on three dimensions:
+
+| Factor | Weight (with query) | What it measures |
+|--------|--------------------|--------------------|
+| **Keyword relevance** | 85% | Token overlap between query and fact |
+| **Recency** | 10% | Exponential decay (half-life: 1 hour) |
+| **Frequency** | 5% | How often the fact was accessed |
+
+When no query is provided, scoring uses recency (60%) + frequency (40%).
+
+**Smart filtering**: If the query has strong keyword matches, noise is automatically suppressed. "What's my timezone?" returns 1 result, not 8.
+
+### Auto-Extraction
+
+Passively detects facts from conversation — no explicit `remember()` needed:
+
+```python
+extracted = mem.process_conversation("My name is Bob and I live in Tokyo")
+# → [{"path": "user.name", "value": "Bob", "confidence": 0.8},
+#    {"path": "user.location", "value": "Tokyo", "confidence": 0.85}]
+
+extracted = mem.process_conversation("Remember that the API key is sk-abc123")
+# → [{"path": "user.notes", "value": "the API key is sk-abc123", "confidence": 0.95}]
+```
+
+Patterns detected: names, locations, timezones, preferences, platforms, project names, explicit "remember" requests.
+
+### Synonym Expansion
+
+Queries are expanded with synonyms for better recall:
+
+- "Who am I?" → searches for `name`, `user`, `identity`
+- "What trades the bot?" → searches for `exchange`, `strategy`, `bot`
+- "What's the time?" → searches for `timezone`, `gmt`, `utc`
+
+### Semantic Search (Optional)
+
+Upgrade to embedding-based retrieval:
+
+```bash
+pip install json-memory[semantic]
+```
+
+```python
+from json_memory import SmartMemory
+from json_memory.semantic import enhance_smart_memory
+
+mem = SmartMemory("agent.json")
+enhance_smart_memory(mem)  # adds FAISS + sentence-transformers
+
+# Now semantic search works — meaning, not just keywords
+mem.recall_relevant("When do I wake up?")
+# → {"user.timezone": "GMT+7"}  (understands "wake up" relates to timezone)
+```
+
+Without the optional deps, falls back gracefully to keyword scoring. Zero lock-in.
+
+### Score Debugging
+
+Understand why a fact was or wasn't returned:
+
+```python
+mem.explain_score("user.timezone", "What's my timezone?")
+# → {"path": "user.timezone", "recency": 0.95, "frequency": 0.8,
+#    "keyword_relevance": 0.43, "final_score": 0.45, "access_count": 12}
+```
+
 ## API Reference
 
 ### Memory

@@ -7,3 +7,4 @@ build/
 .pytest_cache/
 .venv/
 my_agent.json
+json_memory[semantic]
