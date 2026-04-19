@@ -471,3 +471,32 @@ schema = Schema({
 # Get the JSON array for OpenAI API 'tools' parameter
 tools = schema.to_openai_tools("update_memory", "Update the agent's internal profile")
 ```
+
+## Framework Maturity (Ph. 8)
+
+### Persistence Adapters
+Move beyond raw JSON files with professional storage adapters.
+
+```python
+from json_memory.adapters import SQLiteAdapter
+
+# Use atomic, corruption-proof SQLite persistence
+adapter = SQLiteAdapter("agent_brain.db")
+mem = Memory(storage_adapter=adapter)
+```
+
+### Data Redaction (PII Security)
+Ensure sensitive data like API keys and passwords never leak into audit logs or UI exports.
+
+```python
+# Keys to protect
+mem = Memory(redact_keys=["api_key", "password"], track_history=True)
+
+mem.set("config.api_key", "sk-12345")
+
+# Audit logs are automatically masked
+print(mem.history()[0]["value"]) # "***REDACTED***"
+
+# Safe export for dashboards
+clean_dict = mem.to_dict(redact=True)
+```

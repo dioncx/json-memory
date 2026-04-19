@@ -10,7 +10,9 @@ import json
 import time
 import copy
 import sys
-from typing import Any, Optional, Union, Callable
+from typing import Any, Optional, Union, Callable, List
+
+from .adapters import StorageAdapter, FileAdapter
 
 
 class _Missing:
@@ -39,12 +41,15 @@ class Memory:
 
     def __init__(self, data: Optional[dict] = None, max_chars: int = 2200, 
                  eviction_policy: str = "error", auto_flush_path: Optional[str] = None,
-                 track_history: bool = False):
+                 storage_adapter: Optional[StorageAdapter] = None,
+                 track_history: bool = False, redact_keys: Optional[List[str]] = None):
         self._data = data or {}
         self.max_chars = max_chars
         self.eviction_policy = eviction_policy
         self.auto_flush_path = auto_flush_path
+        self.storage_adapter = storage_adapter
         self.track_history = track_history
+        self.redact_keys = redact_keys or []
         self._lock = threading.RLock()
         self._audit_log: list[dict] = []
         self._cache: Optional[str] = None
@@ -53,6 +58,18 @@ class Memory:
         self._snapshots: dict[str, dict] = {}
         self._access_times: dict[str, float] = {}
         
+        # Auto-configure adapter if path is given but no adapter provided
+        if self.auto_flush_path and not self.storage_adapter:
+            self.storage_adapter = FileAdapter(self.auto_flush_path)
+
+        # Load initial state from adapter if available
+        if self.storage_adapter:
+            saved_state = self.storage_adapter.load()
+            if saved_state:
+                # Merge saved data if self._data was empty, otherwise keep current
+                if not self._data:
+                    self.set_state(saved_state)
+
         # Initial access tracking for existing data
         if self._data:
             with self._lock:
@@ -215,11 +232,15 @@ class Memory:
                 del self._ttls[path]
                 
             if self.track_history:
+                val_to_log = value
+                if any(red_key in path.split(".") for red_key in self.redact_keys):
+                    val_to_log = "***REDACTED***"
+                
                 self._audit_log.append({
                     "time": time.time(),
                     "action": "set",
                     "path": path,
-                    "value": copy.deepcopy(value)
+                    "value": copy.deepcopy(val_to_log)
                 })
 
             self._track_access(path)
@@ -428,10 +449,13 @@ class Memory:
                 count += 1
         return count
 
-    def to_dict(self) -> dict:
+    def to_dict(self, redact: bool = False) -> dict:
         """Return the full memory as a plain dict (excludes metadata like TTLs)."""
         with self._lock:
-            return copy.deepcopy(self._data)
+            data = copy.deepcopy(self._data)
+            if redact and self.redact_keys:
+                data = self._redact_data(data)
+            return data
 
     def get_state(self) -> dict:
         """Return the complete state including TTL metadata."""
@@ -465,17 +489,31 @@ class Memory:
             return True
 
     def flush(self) -> None:
-        """Manually flush current state to disk if auto_flush_path is set."""
+        """Manually flush current state to disk if an adapter is configured."""
         with self._lock:
-            if not self.auto_flush_path:
+            if not self.storage_adapter:
                 return
-            with open(self.auto_flush_path, "w", encoding="utf-8") as f:
-                f.write(json.dumps(self.get_state(), indent=2, ensure_ascii=False))
+            self.storage_adapter.save(self.get_state())
 
     def _auto_flush(self) -> None:
-        """Internal: flush if path is configured."""
-        if self.auto_flush_path:
+        """Internal: flush if adapter is configured."""
+        if self.storage_adapter:
             self.flush()
+
+    def _redact_data(self, data: Any) -> Any:
+        """Internal: recursively redact keys in a dict."""
+        if not isinstance(data, dict):
+            return data
+        
+        redacted = {}
+        for k, v in data.items():
+            if k in self.redact_keys:
+                redacted[k] = "***REDACTED***"
+            elif isinstance(v, dict):
+                redacted[k] = self._redact_data(v)
+            else:
+                redacted[k] = v
+        return redacted
 
     def _track_access(self, path: str):
         """Internal: record access time for a path and its parents."""
@@ -503,20 +541,40 @@ class Memory:
     def history(self) -> list[dict]:
         """Return a copy of the mutation audit log."""
         with self._lock:
-            return copy.deepcopy(self._audit_log)
+            log = copy.deepcopy(self._audit_log)
+            if self.redact_keys:
+                for entry in log:
+                    if "value" in entry:
+                        entry["value"] = self._redact_data(entry["value"])
+            return log
 
     # ── Serialization ─────────────────────────────────────────────
 
-    def export(self) -> str:
-        """Export as minified JSON string (purges expired keys first)."""
-        self.purge_expired()
-        if self._cache is None:
-            self._cache = json.dumps(self._data, separators=(",", ":"), ensure_ascii=False)
-        return self._cache
+    def export(self, redact: bool = False) -> str:
+        """Export serialized memory as a minified JSON string."""
+        if not redact:
+            self.purge_expired()
+            
+        with self._lock:
+            if not redact and self._cache is not None:
+                return self._cache
+            
+            data = self._data
+            if redact and self.redact_keys:
+                data = self._redact_data(copy.deepcopy(self._data))
+                
+            res = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+            if not redact:
+                self._cache = res
+            return res
 
-    def export_pretty(self) -> str:
-        """Export as pretty-printed JSON string."""
-        return json.dumps(self._data, indent=2, ensure_ascii=False)
+    def export_pretty(self, redact: bool = False) -> str:
+        """Export serialized memory as an indented JSON string."""
+        with self._lock:
+            data = self._data
+            if redact and self.redact_keys:
+                data = self._redact_data(copy.deepcopy(self._data))
+            return json.dumps(data, indent=2, ensure_ascii=False)
 
     @classmethod
     def from_json(cls, json_str: str, max_chars: int = 2200) -> "Memory":

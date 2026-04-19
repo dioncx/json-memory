@@ -955,3 +955,67 @@ def test_openai_tool_export():
     assert "user" in params["required"]
     assert params["properties"]["tasks"]["type"] == "array"
     assert params["properties"]["tasks"]["items"]["type"] == "string"
+
+# ── Phase 8: Framework Maturity Tests ──────────────────────────
+
+def test_sqlite_adapter():
+    import os
+    from json_memory.adapters import SQLiteAdapter
+    db_file = "/www/wwwroot/json-memory/tests/test_brain.db"
+    if os.path.exists(db_file): os.remove(db_file)
+    
+    try:
+        adapter = SQLiteAdapter(db_file)
+        mem = Memory(storage_adapter=adapter)
+        mem.set("user.name", "SQLite User")
+        
+        # Verify it saved
+        state = adapter.load()
+        assert state["data"]["user"]["name"] == "SQLite User"
+        
+        # Reload into new memory
+        mem2 = Memory(storage_adapter=adapter)
+        assert mem2.get("user.name") == "SQLite User"
+    finally:
+        if os.path.exists(db_file): os.remove(db_file)
+
+def test_data_redaction():
+    mem = Memory(track_history=True, redact_keys=["api_key", "password"])
+    mem.set("services.openai.api_key", "sk-12345")
+    mem.set("user.password", "secret_pass")
+    mem.set("user.email", "alice@example.com")
+    
+    # 1. Test history redaction
+    hist = mem.history()
+    keys_in_hist = [entry["path"] for entry in hist]
+    assert "services.openai.api_key" in keys_in_hist
+    # Find the specific entry
+    api_key_entry = next(e for e in hist if e["path"] == "services.openai.api_key")
+    assert api_key_entry["value"] == "***REDACTED***"
+    
+    # 2. Test export redaction
+    pretty = mem.export_pretty(redact=True)
+    assert "sk-12345" not in pretty
+    assert "secret_pass" not in pretty
+    assert "***REDACTED***" in pretty
+    assert "alice@example.com" in pretty
+    
+    # 3. Test to_dict redaction
+    d = mem.to_dict(redact=True)
+    assert d["services"]["openai"]["api_key"] == "***REDACTED***"
+    assert d["user"]["password"] == "***REDACTED***"
+    assert d["user"]["email"] == "alice@example.com"
+
+def test_adapter_auto_config():
+    import os
+    file_path = "/www/wwwroot/json-memory/tests/test_auto.json"
+    if os.path.exists(file_path): os.remove(file_path)
+    
+    try:
+        mem = Memory(auto_flush_path=file_path)
+        from json_memory.adapters import FileAdapter
+        assert isinstance(mem.storage_adapter, FileAdapter)
+        mem.set("key", "val")
+        assert os.path.exists(file_path)
+    finally:
+        if os.path.exists(file_path): os.remove(file_path)
