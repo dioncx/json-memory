@@ -727,3 +727,61 @@ def test_schema_typed_lists():
     
     # Default skeleton for lists
     assert schema.defaults() == {"tags": []}
+
+
+# ── Phase 4: Ephemeral Memory (TTL) Tests ───────────────────────
+
+def test_memory_ttl_expiry():
+    import time
+    mem = Memory()
+    mem.set("temp", "value", ttl=0.1)
+    assert mem.get("temp") == "value"
+    
+    time.sleep(0.15)
+    assert mem.get("temp") is None
+    assert "temp" not in mem._data
+
+def test_memory_ttl_parent_expiry():
+    import time
+    mem = Memory()
+    mem.set("session", {"user": "Alice", "token": "123"}, ttl=0.1)
+    assert mem.get("session.user") == "Alice"
+    
+    time.sleep(0.15)
+    # Accessing child should trigger parent expiry check
+    assert mem.get("session.user") is None
+    assert "session" not in mem._data
+
+def test_memory_ttl_persistence():
+    mem = Memory()
+    mem.set("key", "val", ttl=100)
+    
+    state = mem.get_state()
+    
+    mem2 = Memory()
+    mem2.set_state(state)
+    assert mem2.get("key") == "val"
+    assert "key" in mem2._ttls
+
+def test_memory_purge_expired():
+    import time
+    mem = Memory()
+    mem.set("a", 1, ttl=0.1)
+    mem.set("b", 2, ttl=100)
+    
+    time.sleep(0.15)
+    removed = mem.purge_expired()
+    assert removed == 1
+    assert "a" not in mem._data
+    assert "b" in mem._data
+
+def test_memory_export_purges():
+    import time
+    mem = Memory()
+    mem.set("temp", "secret", ttl=0.1)
+    time.sleep(0.15)
+    
+    # Export should not include expired key
+    out = mem.export()
+    assert "secret" not in out
+    assert mem.get("temp") is None

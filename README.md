@@ -99,11 +99,11 @@ print(mem.stats())
 ### Memory
 | Method | Description |
 |--------|-------------|
-| `mem.set(path, value)` | Set value by dotted path, returns self |
-| `batch_get(paths, default)` | Get multiple values in one call. |
-| `watch(path, callback)` | React to state changes (Reactive Memory). |
-| `export()` | Export data to JSON-serializable dict. |
-| `mem.get(path, default)` | Get value or set/return default if missing |
+| `mem.set(path, value, ttl)` | Set value with optional Time-To-Live (sec) |
+| `mem.get(path, default)` | Get value (auto-purges if expired) |
+| `mem.purge_expired()` | Manually clear all stale data |
+| `mem.batch_get(paths)` | Get multiple values in one call |
+| `mem.watch(path, cb)` | React to state changes |
 | `mem.increment(path, delta)` | Atomically increment a numeric value |
 | `mem.touch(path, ts)` | Set current timestamp at path |
 | `mem.delete(path, prune)` | Delete path, optionally prune empty parents |
@@ -325,3 +325,37 @@ PRs welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Ephemeral Memory (TTL)
+
+Prevent long-term "context bloat" by setting automated expiration on keys. Perfect for short-term session data or scratchpads.
+
+```python
+# Set a temporary secret that expires in 5 minutes
+mem.set("session.token", "xyz_123", ttl=300)
+
+# 6 minutes later...
+mem.get("session.token") # → None (auto-purged)
+```
+
+**Recursion Note**: If a parent key expires, all its children are implicitly expired and cleared upon access.
+
+---
+
+## Technical Reference
+
+### Persistence
+The `Memory` class distinguishes between **data** (raw JSON) and **state** (data + metadata like TTLs).
+
+- `mem.to_dict()`: Returns raw JSON data (standard use case).
+- `mem.get_state()`: Returns data + TTL metadata for full backup/restore.
+- `mem.set_state(dict)`: Restores a full state.
+- `Memory.from_json(str)`: Intelligent enough to detect and load both raw JSON or a Metadata state dict.
+
+### N-gram Detection
+`WeightGate` supports multi-word concepts via `ngram_size`:
+
+```python
+gate = WeightGate(synapse=s, enabled=True, ngram_size=2)
+# "machine learning" will be detected as a single concept
+```

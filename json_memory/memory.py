@@ -40,6 +40,7 @@ class Memory:
         self._data: dict = data if data is not None else {}
         self._cache: Optional[str] = None
         self._watchers: dict[str, list[tuple[Callable, bool]]] = {}
+        self._ttls: dict[str, float] = {}  # full_path -> expires_at
 
     def watch(self, path: str, callback: Callable[[str, Any], None], exact: bool = False) -> "Memory":
         """Register a callback triggered when path (or sub-path) is modified.
@@ -83,16 +84,15 @@ class Memory:
     # ── Core Access ───────────────────────────────────────────────
 
     def get(self, path: str, default: Any = None) -> Any:
-        """Get a value by dotted path. Example: ``mem.get("bot.binance.rst")``
-
-        Returns default if path doesn't exist. To distinguish 'not found'
-        from 'found None', pass a custom sentinel:
-
-            _SENTINEL = object()
-            result = mem.get("key", _SENTINEL)
-            if result is _SENTINEL:
-                ...  # path doesn't exist
+        """Get a value by dotted path. Returns default if not found.
+        
+        Automatically purges and returns default if the key (or a parent) has expired.
         """
+        expired_path = self._is_expired(path)
+        if expired_path:
+            self.delete(expired_path)
+            return default
+
         keys = path.split(".")
         node = self._data
         for key in keys:
@@ -128,9 +128,14 @@ class Memory:
         """Get multiple paths at once. Returns {path: value} dict."""
         return {p: self.get(p, default) for p in paths}
 
-    def set(self, path: str, value: Any) -> "Memory":
+    def set(self, path: str, value: Any, ttl: Optional[float] = None) -> "Memory":
         """Set a value by dotted path. Creates intermediate dicts as needed.
-
+        
+        Args:
+            path: Dotted path to set.
+            value: Value to store.
+            ttl: Optional Time-To-Live in seconds.
+        
         Returns self to allow chaining.
         Raises ValueError if it would exceed max_chars (data unchanged).
         """
@@ -159,6 +164,12 @@ class Memory:
                 f"Memory overflow: setting '{path}' would exceed "
                 f"{self.max_chars} chars"
             )
+        
+        if ttl is not None:
+            self._ttls[path] = time.time() + ttl
+        elif path in self._ttls:
+            del self._ttls[path]
+            
         self._trigger_watchers(path, value)
         return self
 
@@ -195,6 +206,12 @@ class Memory:
 
             self._invalidate()
             self._trigger_watchers(path, None)
+            
+            # Remove TTL for this path and all sub-paths
+            pref = path + "."
+            self._ttls = {k: v for k, v in self._ttls.items() 
+                         if k != path and not k.startswith(pref)}
+            
             return True
         return False
 
@@ -215,6 +232,14 @@ class Memory:
         
         self._invalidate()
         self._trigger_watchers(path, None)
+        
+        if not path:
+            self._ttls = {}
+        else:
+            pref = path + "."
+            self._ttls = {k: v for k, v in self._ttls.items() 
+                         if k != path and not k.startswith(pref)}
+            
         return self
 
     def has(self, path: str) -> bool:
@@ -267,6 +292,39 @@ class Memory:
             self._invalidate()
             raise
 
+    def purge_expired(self) -> int:
+        """Explicitly remove all expired keys. Returns count of removed items."""
+        now = time.time()
+        # Sort by path length so parents are deleted before children
+        expired_paths = sorted(
+            [p for p, exp in self._ttls.items() if exp <= now],
+            key=len
+        )
+        count = 0
+        for path in expired_paths:
+            # Check if still there (might have been deleted by a parent already)
+            if self._is_expired(path):
+                self.delete(path)
+                count += 1
+        return count
+
+    def _is_expired(self, path: str) -> Optional[str]:
+        """Internal: Check if path or any parent path has expired.
+        
+        Returns the path of the first expired element found, or None.
+        """
+        if not path:
+            return None
+            
+        now = time.time()
+        keys = path.split(".")
+        current = ""
+        for i, key in enumerate(keys):
+            current = f"{current}.{key}" if current else key
+            if current in self._ttls and self._ttls[current] <= now:
+                return current
+        return None
+
     def _trigger_merge_watchers(self, data: dict, prefix: str = ""):
         """Internal: trigger watchers for a merge operation."""
         for key, value in data.items():
@@ -300,8 +358,22 @@ class Memory:
         return count
 
     def to_dict(self) -> dict:
-        """Return the full memory as a plain dict."""
+        """Return the full memory as a plain dict (excludes metadata like TTLs)."""
         return copy.deepcopy(self._data)
+
+    def get_state(self) -> dict:
+        """Return the complete state including TTL metadata."""
+        return {
+            "data": self._data,
+            "ttls": self._ttls
+        }
+
+    def set_state(self, state: dict) -> "Memory":
+        """Restore memory from a state dict produced by get_state()."""
+        self._data = copy.deepcopy(state.get("data", {}))
+        self._ttls = copy.deepcopy(state.get("ttls", {}))
+        self._invalidate()
+        return self
 
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""
@@ -319,7 +391,8 @@ class Memory:
     # ── Serialization ─────────────────────────────────────────────
 
     def export(self) -> str:
-        """Export as minified JSON string."""
+        """Export as minified JSON string (purges expired keys first)."""
+        self.purge_expired()
         if self._cache is None:
             self._cache = json.dumps(self._data, separators=(",", ":"), ensure_ascii=False)
         return self._cache
@@ -332,6 +405,11 @@ class Memory:
     def from_json(cls, json_str: str, max_chars: int = 2200) -> "Memory":
         """Create Memory from a JSON string."""
         data = json.loads(json_str)
+        if isinstance(data, dict) and "data" in data and "ttls" in data:
+            # Full state load
+            mem = cls(max_chars=max_chars)
+            mem.set_state(data)
+            return mem
         return cls(max_chars=max_chars, data=data)
 
     @classmethod
