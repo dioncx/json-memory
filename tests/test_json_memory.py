@@ -848,3 +848,57 @@ def test_memory_snapshot_rollback():
 def test_memory_rollback_not_found():
     mem = Memory()
     assert mem.rollback("non_existent") is False
+
+# ── Phase 6: Memory Fading & Persistence Tests ──────────────────
+
+def test_lru_eviction():
+    # max_chars=100, policy="lru"
+    mem = Memory(max_chars=100, eviction_policy="lru")
+    
+    # Fill up memory
+    mem.set("a", "old_and_stale") # ~20 chars
+    mem.set("b", "accessing_now")
+    
+    import time
+    time.sleep(0.01)
+    mem.get("b") # b is now newer than a
+    
+    # This big update should force 'a' out
+    mem.set("c", "X" * 60)
+    
+    assert mem.has("c")
+    assert mem.has("b")
+    assert not mem.has("a") # a should be evicted
+
+def test_lru_native_overflow():
+    mem = Memory(max_chars=50, eviction_policy="lru")
+    import pytest
+    with pytest.raises(ValueError):
+        # Even with eviction, this single key is too big
+        mem.set("giant", "Z" * 100)
+
+def test_auto_flush_persistence():
+    import os
+    flush_file = "/www/wwwroot/json-memory/tests/test_flush.json"
+    if os.path.exists(flush_file):
+        os.remove(flush_file)
+        
+    try:
+        mem = Memory(max_chars=1000, auto_flush_path=flush_file)
+        mem.set("persistent.key", "value")
+        
+        # Verify file exists and has content
+        assert os.path.exists(flush_file)
+        with open(flush_file, "r") as f:
+            data = json.load(f)
+            assert data["data"]["persistent"]["key"] == "value"
+            
+        # Verify changes flush automatically
+        mem.set("persistent.other", 123)
+        with open(flush_file, "r") as f:
+            data = json.load(f)
+            assert data["data"]["persistent"]["other"] == 123
+            
+    finally:
+        if os.path.exists(flush_file):
+            os.remove(flush_file)

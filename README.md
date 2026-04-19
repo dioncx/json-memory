@@ -386,3 +386,53 @@ mem.set("agent.working", True)
 
 mem.rollback("before_task") # Entire state (including TTLs) is restored
 ```
+
+## Autonomous Resilience (Ph. 6)
+
+### Automatic Memory Fading (LRU)
+Prevent crashes when agents exceed their character budget. When  is hit, `json-memory` automatically "forgets" the oldest, least-accessed data.
+
+```python
+# Initialize with LRU eviction policy
+mem = Memory(max_chars=2000, eviction_policy="lru")
+
+# If you set a large object that pushes memory over 2000 chars,
+# the least-recently used keys are automatically deleted to make room.
+```
+
+### Auto-Flush Persistence
+Never lose a thought. Automatically sync state to a physical JSON file on every mutation.
+
+```python
+# Initialize with a flush path
+mem = Memory(auto_flush_path="agent_brain.json")
+
+# Any set(), delete(), or merge() will instantly sync to the file
+mem.set("tasks.current", "Analyzing logs...")
+# 'agent_brain.json' is updated immediately.
+```
+
+## Autonomous Resilience (Ph. 6)
+
+### Automatic Memory Fading (LRU)
+Prevent crashes when agents exceed their character budget. When `max_chars` is hit, `json-memory` automatically "forgets" the oldest, least-accessed data.
+
+```python
+# Initialize with LRU eviction policy
+mem = Memory(max_chars=2000, eviction_policy="lru")
+
+# If you set a large object that pushes memory over 2000 chars,
+# the least-recently used keys are automatically deleted to make room.
+```
+
+### Auto-Flush Persistence
+Never lose a thought. Automatically sync state to a physical JSON file on every mutation.
+
+```python
+# Initialize with a flush path
+mem = Memory(auto_flush_path="agent_brain.json")
+
+# Any set(), delete(), or merge() will instantly sync to the file
+mem.set("tasks.current", "Analyzing logs...")
+# 'agent_brain.json' is updated immediately.
+```

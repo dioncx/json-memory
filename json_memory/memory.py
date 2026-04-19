@@ -36,13 +36,22 @@ class Memory:
         '{"user":{"name":"Alice"},"bot":{"restart":"kill && nohup ./bot > log"}}'
     """
 
-    def __init__(self, max_chars: int = 2200, data: Optional[dict] = None):
+    def __init__(self, data: Optional[dict] = None, max_chars: int = 2200, 
+                 eviction_policy: str = "error", auto_flush_path: Optional[str] = None):
+        self._data = data or {}
         self.max_chars = max_chars
-        self._data: dict = data if data is not None else {}
+        self.eviction_policy = eviction_policy
+        self.auto_flush_path = auto_flush_path
         self._cache: Optional[str] = None
         self._watchers: dict[str, list[tuple[Callable, bool]]] = {}
         self._ttls: dict[str, float] = {}  # full_path -> expires_at
         self._snapshots: dict[str, dict] = {}
+        self._access_times: dict[str, float] = {}
+        
+        # Initial access tracking for existing data
+        if self._data:
+            for path in self.paths():
+                self._track_access(path)
 
     def watch(self, path: str, callback: Callable[[str, Any], None], exact: bool = False) -> "Memory":
         """Register a callback triggered when path (or sub-path) is modified.
@@ -102,6 +111,8 @@ class Memory:
                 node = node[key]
             else:
                 return default
+        
+        self._track_access(path)
         return node
 
     def get_or_set(self, path: str, default: Any) -> Any:
@@ -119,6 +130,7 @@ class Memory:
             current = 0
         new_val = current + delta
         self.set(path, new_val)
+        self._track_access(path)
         return new_val
 
     def touch(self, path: str, timestamp: float = None) -> "Memory":
@@ -151,6 +163,8 @@ class Memory:
         regex = re.compile(f"^{regex_pat}$")
         
         matches = [p for p in self.paths() if regex.match(p)]
+        for p in matches:
+            self._track_access(p)
         return self.batch_get(matches)
 
     def set(self, path: str, value: Any, ttl: Optional[float] = None) -> "Memory":
@@ -182,20 +196,35 @@ class Memory:
 
         # Check budget
         if len(self.export()) > self.max_chars:
-            # Rollback to snapshot
-            self._data = snapshot
-            self._invalidate()
-            raise ValueError(
-                f"Memory overflow: setting '{path}' would exceed "
-                f"{self.max_chars} chars"
-            )
+            if self.eviction_policy == "lru":
+                # Get all leaf paths, excluding the one we just set
+                all_paths = [p for p in self.paths() if p != path]
+                # Sort by access time (oldest first)
+                sorted_paths = sorted(all_paths, key=lambda p: self._access_times.get(p, 0))
+                
+                for p in sorted_paths:
+                    if len(self.export()) <= self.max_chars:
+                        break
+                    self.delete(p, prune=True)
+            
+            # Final check - if still too large (or policy is "error")
+            if len(self.export()) > self.max_chars:
+                # Rollback to snapshot
+                self._data = snapshot
+                self._invalidate()
+                raise ValueError(
+                    f"Memory overflow: setting '{path}' would exceed "
+                    f"{self.max_chars} chars"
+                )
         
         if ttl is not None:
             self._ttls[path] = time.time() + ttl
         elif path in self._ttls:
             del self._ttls[path]
             
+        self._track_access(path)
         self._trigger_watchers(path, value)
+        self._auto_flush()
         return self
 
     def delete(self, path: str, prune: bool = False) -> bool:
@@ -232,11 +261,14 @@ class Memory:
             self._invalidate()
             self._trigger_watchers(path, None)
             
-            # Remove TTL for this path and all sub-paths
+            # Remove metadata for this path and all sub-paths
             pref = path + "."
             self._ttls = {k: v for k, v in self._ttls.items() 
                          if k != path and not k.startswith(pref)}
+            self._access_times = {k: v for k, v in self._access_times.items()
+                                 if k != path and not k.startswith(pref)}
             
+            self._auto_flush()
             return True
         return False
 
@@ -264,7 +296,10 @@ class Memory:
             pref = path + "."
             self._ttls = {k: v for k, v in self._ttls.items() 
                          if k != path and not k.startswith(pref)}
+            self._access_times = {k: v for k, v in self._access_times.items()
+                                 if k != path and not k.startswith(pref)}
             
+        self._auto_flush()
         return self
 
     def has(self, path: str) -> bool:
@@ -331,6 +366,9 @@ class Memory:
             if self._is_expired(path):
                 self.delete(path)
                 count += 1
+        
+        if count > 0:
+            self._auto_flush()
         return count
 
     def _is_expired(self, path: str) -> Optional[str]:
@@ -398,6 +436,7 @@ class Memory:
         self._data = copy.deepcopy(state.get("data", {}))
         self._ttls = copy.deepcopy(state.get("ttls", {}))
         self._invalidate()
+        self._auto_flush()
         return self
 
     def snapshot(self, name: str) -> None:
@@ -409,7 +448,29 @@ class Memory:
         if name not in self._snapshots:
             return False
         self.set_state(self._snapshots[name])
+        self._auto_flush()
         return True
+
+    def flush(self) -> None:
+        """Manually flush current state to disk if auto_flush_path is set."""
+        if not self.auto_flush_path:
+            return
+        with open(self.auto_flush_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(self.get_state(), indent=2, ensure_ascii=False))
+
+    def _auto_flush(self) -> None:
+        """Internal: flush if path is configured."""
+        if self.auto_flush_path:
+            self.flush()
+
+    def _track_access(self, path: str):
+        """Internal: record access time for a path and its parents."""
+        now = time.time()
+        keys = path.split(".")
+        current = ""
+        for key in keys:
+            current = f"{current}.{key}" if current else key
+            self._access_times[current] = now
 
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""
