@@ -4,6 +4,7 @@ Memory — Core hierarchical JSON memory for AI agents.
 Provides dotted-path access to nested JSON data with minified storage.
 """
 
+import re
 import json
 import time
 import copy
@@ -41,6 +42,7 @@ class Memory:
         self._cache: Optional[str] = None
         self._watchers: dict[str, list[tuple[Callable, bool]]] = {}
         self._ttls: dict[str, float] = {}  # full_path -> expires_at
+        self._snapshots: dict[str, dict] = {}
 
     def watch(self, path: str, callback: Callable[[str, Any], None], exact: bool = False) -> "Memory":
         """Register a callback triggered when path (or sub-path) is modified.
@@ -127,6 +129,29 @@ class Memory:
     def batch_get(self, paths: list[str], default: Any = None) -> dict:
         """Get multiple paths at once. Returns {path: value} dict."""
         return {p: self.get(p, default) for p in paths}
+
+    def find(self, pattern: str) -> dict:
+        """Find paths matching a wildcard pattern.
+        
+        '*' matches one segment, '**' matches zero or more segments.
+        Example: "users.*.status", "**.config"
+        """
+        # 1. Convert glob to regex
+        # Escape all characters, then replace wildcard patterns
+        regex_pat = re.escape(pattern)
+        # ** at start: (?:.*?\.)?
+        regex_pat = regex_pat.replace(r'\*\*\.', r'(?:.*\.)?')
+        # ** at end: (?:\..*?)?
+        regex_pat = regex_pat.replace(r'\.\*\*', r'(?:\..*)?')
+        # ** internal: .*
+        regex_pat = regex_pat.replace(r'\*\*', r'.*')
+        # * internal: [^.]+
+        regex_pat = regex_pat.replace(r'\*', r'[^.]+')
+        
+        regex = re.compile(f"^{regex_pat}$")
+        
+        matches = [p for p in self.paths() if regex.match(p)]
+        return self.batch_get(matches)
 
     def set(self, path: str, value: Any, ttl: Optional[float] = None) -> "Memory":
         """Set a value by dotted path. Creates intermediate dicts as needed.
@@ -364,8 +389,8 @@ class Memory:
     def get_state(self) -> dict:
         """Return the complete state including TTL metadata."""
         return {
-            "data": self._data,
-            "ttls": self._ttls
+            "data": copy.deepcopy(self._data),
+            "ttls": copy.deepcopy(self._ttls)
         }
 
     def set_state(self, state: dict) -> "Memory":
@@ -374,6 +399,17 @@ class Memory:
         self._ttls = copy.deepcopy(state.get("ttls", {}))
         self._invalidate()
         return self
+
+    def snapshot(self, name: str) -> None:
+        """Create a named checkpoint of the current memory state."""
+        self._snapshots[name] = self.get_state()
+
+    def rollback(self, name: str) -> bool:
+        """Rollback to a previously saved checkpoint. Returns True if successful."""
+        if name not in self._snapshots:
+            return False
+        self.set_state(self._snapshots[name])
+        return True
 
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""

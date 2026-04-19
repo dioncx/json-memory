@@ -785,3 +785,66 @@ def test_memory_export_purges():
     out = mem.export()
     assert "secret" not in out
     assert mem.get("temp") is None
+
+# ── Phase 5: Advanced Search & Transactions Tests ───────────────
+
+def test_memory_find_regex():
+    mem = Memory()
+    mem.set("users.alice.health", 100)
+    mem.set("users.bob.health", 80)
+    mem.set("users.charlie.status", "idle")
+    mem.set("system.config.health", "ok")
+    
+    # 1. Match one segment
+    results = mem.find("users.*.health")
+    assert len(results) == 2
+    assert "users.alice.health" in results
+    assert "users.bob.health" in results
+    assert "users.charlie.status" not in results
+
+    # 2. Exact match
+    results = mem.find("system.config.health")
+    assert len(results) == 1
+    assert results["system.config.health"] == "ok"
+
+def test_memory_find_double_wildcard():
+    mem = Memory()
+    mem.set("status", "global_ok")
+    mem.set("job.status", "running")
+    mem.set("job.task.subtask.status", "pending")
+    mem.set("other.config", 1)
+    
+    results = mem.find("**.status")
+    assert len(results) == 3
+    assert "status" in results
+    assert "job.status" in results
+    assert "job.task.subtask.status" in results
+    assert "other.config" not in results
+
+def test_memory_snapshot_rollback():
+    mem = Memory()
+    mem.set("user.name", "Alice", ttl=100)
+    mem.set("user.score", 50)
+    
+    # Take snapshot
+    mem.snapshot("pre_trial")
+    
+    # Mutate
+    mem.set("user.name", "Bob")
+    mem.delete("user.score")
+    mem.set("trial.data", [1, 2, 3])
+    
+    assert mem.get("user.name") == "Bob"
+    assert mem.has("trial.data")
+    
+    # Rollback
+    success = mem.rollback("pre_trial")
+    assert success is True
+    assert mem.get("user.name") == "Alice"
+    assert mem.get("user.score") == 50
+    assert "trial.data" not in mem._data
+    assert "user.name" in mem._ttls  # Meta preserved
+
+def test_memory_rollback_not_found():
+    mem = Memory()
+    assert mem.rollback("non_existent") is False

@@ -359,3 +359,30 @@ The `Memory` class distinguishes between **data** (raw JSON) and **state** (data
 gate = WeightGate(synapse=s, enabled=True, ngram_size=2)
 # "machine learning" will be detected as a single concept
 ```
+
+## Advanced Search & Transactions
+
+### Wildcard Search
+Use `mem.find(pattern)` to query paths using glob-like wildcards.
+
+```python
+# Find all character healths across different teams
+healths = mem.find("teams.*.members.*.health")
+# healths = {"teams.red.members.alice.health": 100, ...}
+
+# Find all 'status' keys at any depth
+all_statuses = mem.find("**.status")
+```
+
+### State Snapshots (Transactions)
+Safety first. Take snapshots before risky operations and rollback if needed.
+
+```python
+mem.snapshot("before_task")
+
+# Attempt complex logic
+mem.set("agent.working", True)
+# ... something goes wrong ...
+
+mem.rollback("before_task") # Entire state (including TTLs) is restored
+```
