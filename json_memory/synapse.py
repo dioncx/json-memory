@@ -8,6 +8,7 @@ Mimics how human memory works: thinking of "coffee" activates
 import json
 from pathlib import Path
 from typing import Optional
+from collections import deque
 
 
 class Synapse:
@@ -240,10 +241,10 @@ class Synapse:
             return [start]
 
         visited = {start}
-        queue = [(start, [start])]
+        queue = deque([(start, [start])])
 
         while queue:
-            current, path = queue.pop(0)
+            current, path = queue.popleft()
             if len(path) > max_depth:
                 continue
 
@@ -277,6 +278,44 @@ class Synapse:
             "frequencies": self._frequencies,
             "metadata": self._metadata,
         }
+
+    def merge(self, other: "Synapse") -> "Synapse":
+        """Merge another Synapse graph into this one.
+
+        Existing links/weights are updated if they exist in 'other'.
+        Returns self for chaining.
+        """
+        other_data = other.to_dict()
+        
+        # Merge links
+        for concept, associations in other_data["links"].items():
+            if concept not in self._links:
+                self._links[concept] = []
+            for assoc in associations:
+                if assoc not in self._links[concept]:
+                    self._links[concept].append(assoc)
+        
+        # Merge weights
+        for concept, weights in other_data["weights"].items():
+            if concept not in self._weights:
+                self._weights[concept] = {}
+            for assoc, weight in weights.items():
+                self._weights[concept][assoc] = weight
+        
+        # Merge frequencies
+        for concept, freqs in other_data["frequencies"].items():
+            if concept not in self._frequencies:
+                self._frequencies[concept] = {}
+            for assoc, count in freqs.items():
+                self._frequencies[concept][assoc] = self._frequencies[concept].get(assoc, 0) + count
+        
+        # Merge metadata
+        for concept, meta in other_data["metadata"].items():
+            if concept not in self._metadata:
+                self._metadata[concept] = {}
+            self._metadata[concept].update(meta)
+            
+        return self
 
     def export(self) -> str:
         """Export as minified JSON string."""

@@ -289,11 +289,7 @@ def _candidates(word: str) -> set[str]:
 
 
 def _tokenize(text: str) -> set[str]:
-    """Extract all word forms from text as a flat set of candidates.
-
-    For each token, generates all plausible roots so we can match
-    "debugged" against "debug" via shared root set overlap.
-    """
+    """Extract all word forms from text as a flat set of candidates."""
     raw_tokens = re.findall(r'\b\w+\b', text.lower())
     all_forms = set()
     for token in raw_tokens:
@@ -301,25 +297,24 @@ def _tokenize(text: str) -> set[str]:
     return all_forms
 
 
-def _matches_term(tokens: set[str], term: str) -> bool:
+def _matches_term(tokens: set[str], term: str, cache: dict[str, set[str]] = None) -> bool:
     """Check if a term (concept or association) appears in the token set.
 
     Compares candidate sets for overlap — if any root form of the term
     matches any root form found in text, it's a hit.
-
-    Handles:
-    - Exact word match: "debug" in "I debug the issue"
-    - Stemmed match: "debug" in "I debugged the issue"
-    - Plural match: "bot" in "the bots crashed"
-    - Multi-word terms: "check_logs" matches when "check" and "logs" present
-    - Underscore/space normalization: "check_logs" == "check logs"
     """
-    term_lower = term.lower().replace("_", " ")
-    parts = term_lower.split()
+    if cache is not None and term in cache:
+        term_candidates = cache[term]
+    else:
+        term_lower = term.lower().replace("_", " ")
+        parts = term_lower.split()
 
-    term_candidates = set()
-    for part in parts:
-        term_candidates.update(_candidates(part))
+        term_candidates = set()
+        for part in parts:
+            term_candidates.update(_candidates(part))
+        
+        if cache is not None:
+            cache[term] = term_candidates
 
     return bool(term_candidates & tokens)
 
@@ -365,6 +360,7 @@ class WeightGate:
         self._enabled = enabled
         self._interactions = 0
         self._created = time.time()
+        self._term_token_cache: dict[str, set[str]] = {}
 
     @property
     def synapse(self) -> Synapse:
@@ -437,7 +433,7 @@ class WeightGate:
         detected = {}
 
         for concept in self._synapse.concepts():
-            if not _matches_term(tokens, concept):
+            if not _matches_term(tokens, concept, self._term_token_cache):
                 continue  # Concept not mentioned — skip entirely
 
             assocs = self._synapse.get_associations(concept)
@@ -447,12 +443,14 @@ class WeightGate:
             for assoc, weight in assocs.items():
                 if assoc.startswith("_"):
                     continue
-                if _matches_term(tokens, assoc):
+                if _matches_term(tokens, assoc, self._term_token_cache):
                     mentioned_assocs.append(assoc)
                 else:
                     unmentioned_assocs.append(assoc)
 
             # Boost mentioned associations
+            if mentioned_assocs:
+                print(f"DEBUG: Concept {concept} has mentioned_assocs: {mentioned_assocs}")
             for assoc in mentioned_assocs:
                 self._synapse.strengthen(concept, assoc, self.boost_rate)
                 detected.setdefault(concept, []).append(f"{assoc}↑")
@@ -486,7 +484,7 @@ class WeightGate:
             for assoc, weight in self._synapse.get_associations(concept).items():
                 if assoc.startswith("_"):
                     continue
-                if _matches_term(tokens, assoc):
+                if _matches_term(tokens, assoc, self._term_token_cache):
                     new_w = self._synapse.strengthen(
                         concept, assoc, self.boost_rate * 0.5
                     )
@@ -520,12 +518,14 @@ class WeightGate:
     def add_concept(self, concept: str, associations: dict[str, float]) -> None:
         """Add a new concept with weighted associations."""
         self._synapse.link(concept, list(associations.keys()), weights=associations)
+        self._term_token_cache.clear()
         self._save()
 
     def remove_concept(self, concept: str) -> bool:
         """Remove a concept and all its links. Returns True if found."""
         removed = self._synapse.remove_concept(concept)
         if removed:
+            self._term_token_cache.clear()
             self._save()
         return removed
 

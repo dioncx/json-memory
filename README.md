@@ -83,7 +83,7 @@ mem.set("bot.binance.watchlist", ["BNB", "KITE", "AGLD"])
 
 # Get by dotted path
 print(mem.get("u.name"))           # "Alice"
-print(mem.get("bot.binance.rst"))  # "kill && nohup ./bot > log 2>&1"
+print(mem.get("bot.binance.restart"))  # "kill && nohup ./bot > log 2>&1"
 
 # Export/import
 json_str = mem.export()            # minified JSON string
@@ -91,7 +91,7 @@ mem2 = Memory.from_json(json_str)  # reconstruct
 
 # Stats
 print(mem.stats())
-# {"entries": 4, "chars_used": 142, "chars_max": 2000, "utilization": "7.1%"}
+# {"entries": 4, "chars_used": 146, "chars_max": 2000, "chars_free": 1854, "utilization": "7.3%"}
 ```
 
 ## Synapse Mode (Associative Memory)

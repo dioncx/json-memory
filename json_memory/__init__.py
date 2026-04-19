@@ -4,7 +4,7 @@ from .memory import Memory
 from .synapse import Synapse
 from .schema import Schema
 from .compress import compress, decompress, savings_report
-from .weight_gate import WeightGate
+from .weight_gate import WeightGate, HAS_SNOWBALL
 
 __version__ = "0.1.5"
-__all__ = ["Memory", "Synapse", "Schema", "WeightGate", "compress", "decompress", "savings_report"]
+__all__ = ["Memory", "Synapse", "Schema", "WeightGate", "compress", "decompress", "savings_report", "HAS_SNOWBALL"]

@@ -58,9 +58,15 @@ class Schema:
                 if extra:
                     return False
             for key, expected in template.items():
-                if key not in data:
-                    continue  # Missing optional keys are OK
-                if not self._check(data[key], expected, strict):
+                is_required = key.startswith("!")
+                clean_key = key[1:] if is_required else key
+                
+                if clean_key not in data:
+                    if is_required:
+                        return False
+                    continue
+                
+                if not self._check(data[clean_key], expected, strict):
                     return False
             return True
 
@@ -82,7 +88,11 @@ class Schema:
 
     def _skeleton(self, template: Any) -> Any:
         if isinstance(template, dict):
-            return {k: self._skeleton(v) for k, v in template.items()}
+            skeleton = {}
+            for k, v in template.items():
+                clean_k = k[1:] if k.startswith("!") else k
+                skeleton[clean_k] = self._skeleton(v)
+            return skeleton
         return None
 
     def diff(self, data: dict) -> dict:
@@ -102,11 +112,14 @@ class Schema:
         if not isinstance(template, dict):
             return missing
         for key, expected in template.items():
-            path = f"{prefix}.{key}" if prefix else key
-            if key not in data:
+            is_required = key.startswith("!")
+            clean_key = key[1:] if is_required else key
+            path = f"{prefix}.{clean_key}" if prefix else clean_key
+            
+            if clean_key not in data:
                 missing.append(path)
-            elif isinstance(expected, dict) and isinstance(data[key], dict):
-                missing.extend(self._missing(data[key], expected, prefix=path))
+            elif isinstance(expected, dict) and isinstance(data[clean_key], dict):
+                missing.extend(self._missing(data[clean_key], expected, prefix=path))
         return missing
 
     def _extra(self, data: dict, template: dict, prefix: str = "") -> list:
@@ -115,10 +128,16 @@ class Schema:
             return extra
         for key in data:
             path = f"{prefix}.{key}" if prefix else key
-            if key not in template:
+            
+            # Find key in template (with or without '!')
+            template_key = key
+            if key not in template and f"!{key}" in template:
+                template_key = f"!{key}"
+            
+            if template_key not in template:
                 extra.append(path)
-            elif isinstance(data[key], dict) and isinstance(template.get(key), dict):
-                extra.extend(self._extra(data[key], template[key], prefix=path))
+            elif isinstance(data[key], dict) and isinstance(template.get(template_key), dict):
+                extra.extend(self._extra(data[key], template[template_key], prefix=path))
         return extra
 
     def export(self) -> str:

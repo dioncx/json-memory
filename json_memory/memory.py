@@ -6,6 +6,7 @@ Provides dotted-path access to nested JSON data with minified storage.
 
 import json
 import time
+import copy
 from typing import Any, Optional, Union
 
 
@@ -36,6 +37,11 @@ class Memory:
     def __init__(self, max_chars: int = 2200, data: Optional[dict] = None):
         self.max_chars = max_chars
         self._data: dict = data if data is not None else {}
+        self._cache: Optional[str] = None
+
+    def _invalidate(self):
+        """Invalidate the export cache."""
+        self._cache = None
 
     # ── Core Access ───────────────────────────────────────────────
 
@@ -59,16 +65,16 @@ class Memory:
                 return default
         return node
 
-    def set(self, path: str, value: Any) -> bool:
+    def set(self, path: str, value: Any) -> "Memory":
         """Set a value by dotted path. Creates intermediate dicts as needed.
 
-        Returns True if set succeeded within max_chars budget.
+        Returns self to allow chaining.
         Raises ValueError if it would exceed max_chars (data unchanged).
         """
         keys = path.split(".")
 
         # Snapshot current state for rollback
-        snapshot = json.loads(self.export())
+        snapshot = copy.deepcopy(self._data)
 
         # Build path and set value
         node = self._data
@@ -78,29 +84,73 @@ class Memory:
             node = node[key]
         node[keys[-1]] = value
 
+        # Invalidate cache before check
+        self._invalidate()
+
         # Check budget
         if len(self.export()) > self.max_chars:
             # Rollback to snapshot
             self._data = snapshot
+            self._invalidate()
             raise ValueError(
                 f"Memory overflow: setting '{path}' would exceed "
                 f"{self.max_chars} chars"
             )
-        return True
+        return self
 
-    def delete(self, path: str) -> bool:
-        """Delete a value by dotted path. Returns True if found and deleted."""
+    def delete(self, path: str, prune: bool = False) -> bool:
+        """Delete a value by dotted path. Returns True if found and deleted.
+
+        Args:
+            path: Dotted path to delete.
+            prune: If True, also remove empty parent dicts along the path.
+        """
         keys = path.split(".")
         node = self._data
+        stack = [(None, self._data)]  # (key_in_parent, node)
+        
         for key in keys[:-1]:
             if isinstance(node, dict) and key in node:
+                parent = node
                 node = node[key]
+                stack.append((key, node))
             else:
                 return False
+        
         if keys[-1] in node:
             del node[keys[-1]]
+            
+            if prune:
+                # Bubble up and remove empty dicts
+                for i in range(len(stack) - 1, 0, -1):
+                    key_to_delete, current_node = stack[i]
+                    parent_node = stack[i-1][1]
+                    if isinstance(current_node, dict) and not current_node:
+                        del parent_node[key_to_delete]
+                    else:
+                        break
+
+            self._invalidate()
             return True
         return False
+
+    def clear(self, path: str = "") -> "Memory":
+        """Clear memory at a path (or everything if empty)."""
+        if not path:
+            self._data = {}
+        else:
+            keys = path.split(".")
+            node = self._data
+            for key in keys[:-1]:
+                if isinstance(node, dict) and key in node:
+                    node = node[key]
+                else:
+                    return self
+            if keys[-1] in node:
+                node[keys[-1]] = {}
+        
+        self._invalidate()
+        return self
 
     def has(self, path: str) -> bool:
         """Check if a dotted path exists.
@@ -120,18 +170,22 @@ class Memory:
     # ── Bulk Operations ───────────────────────────────────────────
 
     def merge(self, data: dict, prefix: str = "") -> int:
-        """Merge a dict into memory at an optional prefix path.
+        """Merge a dict into memory at an optional prefix path. Alias: update().
+        ...
 
         Atomic: either all keys merge or none do (rollback on overflow).
         Returns number of keys merged.
         Raises ValueError if the combined result would exceed max_chars.
         """
         # Snapshot before any changes
-        snapshot = json.loads(self.export())
+        snapshot = copy.deepcopy(self._data)
 
         try:
             # Apply all changes without individual overflow checks
             count = self._merge_apply(data, prefix)
+
+            # Invalidate cache before check
+            self._invalidate()
 
             # Check budget once for the whole batch
             if len(self.export()) > self.max_chars:
@@ -143,7 +197,12 @@ class Memory:
         except ValueError:
             # Rollback entire batch — all or nothing
             self._data = snapshot
+            self._invalidate()
             raise
+
+    def update(self, data: dict, prefix: str = "") -> int:
+        """Alias for merge()."""
+        return self.merge(data, prefix)
 
     def _merge_apply(self, data: dict, prefix: str = "") -> int:
         """Apply merge operations without overflow checks (internal)."""
@@ -185,7 +244,9 @@ class Memory:
 
     def export(self) -> str:
         """Export as minified JSON string."""
-        return json.dumps(self._data, separators=(",", ":"), ensure_ascii=False)
+        if self._cache is None:
+            self._cache = json.dumps(self._data, separators=(",", ":"), ensure_ascii=False)
+        return self._cache
 
     def export_pretty(self) -> str:
         """Export as pretty-printed JSON string."""
