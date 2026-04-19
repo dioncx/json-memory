@@ -6,6 +6,7 @@ Mimics how human memory works: thinking of "coffee" activates
 """
 
 import json
+import copy
 from pathlib import Path
 from typing import Optional
 from collections import deque
@@ -162,11 +163,11 @@ class Synapse:
 
         # Remove bidirectional references from neighbors
         for neighbor in list(self._links.get(concept, [])):
-            if concept in self._links.get(neighbor, []):
+            if neighbor in self._links and concept in self._links[neighbor]:
                 self._links[neighbor].remove(concept)
-            if concept in self._weights.get(neighbor, {}):
+            if neighbor in self._weights and concept in self._weights[neighbor]:
                 del self._weights[neighbor][concept]
-            if concept in self._frequencies.get(neighbor, {}):
+            if neighbor in self._frequencies and concept in self._frequencies[neighbor]:
                 del self._frequencies[neighbor][concept]
 
         # Remove the concept itself
@@ -175,6 +176,61 @@ class Synapse:
         self._frequencies.pop(concept, None)
         self._metadata.pop(concept, None)
         return True
+
+    def rename_concept(self, old: str, new: str) -> bool:
+        """Rename a concept, preserving all its links and weights.
+        
+        Returns True if old concept was found and renamed.
+        """
+        if old not in self._links or new in self._links:
+            return False
+            
+        # Update neighbors' links to the new name
+        for neighbor in self._links.get(old, []):
+            if neighbor in self._links and old in self._links[neighbor]:
+                idx = self._links[neighbor].index(old)
+                self._links[neighbor][idx] = new
+            if neighbor in self._weights and old in self._weights[neighbor]:
+                self._weights[neighbor][new] = self._weights[neighbor].pop(old)
+            if neighbor in self._frequencies and old in self._frequencies[neighbor]:
+                self._frequencies[neighbor][new] = self._frequencies[neighbor].pop(old)
+                
+        # Move the concept data
+        self._links[new] = self._links.pop(old)
+        if old in self._weights:
+            self._weights[new] = self._weights.pop(old)
+        if old in self._frequencies:
+            self._frequencies[new] = self._frequencies.pop(old)
+        if old in self._metadata:
+            self._metadata[new] = self._metadata.pop(old)
+            
+        return True
+
+    def subgraph(self, concepts: list[str]) -> "Synapse":
+        """Extract a subgraph containing only specified concepts and their mutual links.
+        
+        Useful for focusing an agent on a specific context.
+        """
+        sub = Synapse()
+        concepts_set = set(concepts)
+        
+        for c in concepts:
+            if c not in self._links:
+                continue
+            
+            # Filter links to only those within the requested concept set
+            valid_assocs = [a for a in self._links[c] if a in concepts_set]
+            sub._links[c] = valid_assocs
+            
+            # Pull weights/freqs/metadata for valid assocs
+            if c in self._weights:
+                sub._weights[c] = {a: self._weights[c][a] for a in valid_assocs if a in self._weights[c]}
+            if c in self._frequencies:
+                sub._frequencies[c] = {a: self._frequencies[c][a] for a in valid_assocs if a in self._frequencies[c]}
+            if c in self._metadata:
+                sub._metadata[c] = copy.deepcopy(self._metadata[c])
+                
+        return sub
 
     def strengthen(self, concept: str, assoc: str, boost: float = 0.1) -> float:
         """Strengthen an association by boosting its weight.
@@ -273,10 +329,10 @@ class Synapse:
     def to_dict(self) -> dict:
         """Export the full graph as a dict."""
         return {
-            "links": self._links,
-            "weights": self._weights,
-            "frequencies": self._frequencies,
-            "metadata": self._metadata,
+            "links": copy.deepcopy(self._links),
+            "weights": copy.deepcopy(self._weights),
+            "frequencies": copy.deepcopy(self._frequencies),
+            "metadata": copy.deepcopy(self._metadata),
         }
 
     def merge(self, other: "Synapse") -> "Synapse":

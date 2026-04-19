@@ -94,6 +94,44 @@ print(mem.stats())
 # {"entries": 4, "chars_used": 146, "chars_max": 2000, "chars_free": 1854, "utilization": "7.3%"}
 ```
 
+## API Reference
+
+### Memory
+| Method | Description |
+|--------|-------------|
+| `mem.set(path, value)` | Set value by dotted path, returns self |
+| `mem.get(path, default)` | Get value by dotted path |
+| `mem.get_or_set(path, default)` | Get value or set/return default if missing |
+| `mem.increment(path, delta)` | Atomically increment a numeric value |
+| `mem.touch(path, ts)` | Set current timestamp at path |
+| `mem.delete(path, prune)` | Delete path, optionally prune empty parents |
+| `mem.clear(path)` | Clear subtree or the entire memory |
+| `mem.has(path)` | Check if path exists |
+| `mem.paths(prefix)` | List all leaf paths |
+| `mem.merge(data, prefix)` | Bulk merge a dict into memory |
+| `mem.stats()` | Get size and utilization metrics |
+
+### Synapse
+| Method | Description |
+|--------|-------------|
+| `brain.link(c, assocs)` | Create bidirectional weighted links |
+| `brain.activate(c, depth)` | Recall associated concepts |
+| `brain.strengthen(c, a)` | Increase association weight |
+| `brain.weaken(c, a)` | Decrease association weight (decay) |
+| `brain.find_path(s, e)` | Find shortest path between concepts |
+| `brain.hubs()` | Find the most connected concepts |
+| `brain.merge(other)` | Combine two independent graphs |
+| `brain.rename_concept(o, n)` | Rename concept preserving all links |
+| `brain.subgraph(concepts)` | Extract localized context |
+
+### Schema
+| Method | Description |
+|--------|-------------|
+| `schema.validate(data)` | Validate dict against template |
+| `schema.validate_memory(m)` | Validate Memory instance directly |
+| `schema.diff(data)` | Get missing and extra keys |
+| `schema.defaults()` | Generate skeleton from schema |
+
 ## Synapse Mode (Associative Memory)
 
 Like how thinking of "coffee" activates "morning", "energy", "routine":

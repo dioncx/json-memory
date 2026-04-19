@@ -5,7 +5,10 @@ Ensures your memory follows a consistent shape across sessions.
 """
 
 import json
-from typing import Any, Optional
+from typing import Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .memory import Memory
 
 
 class Schema:
@@ -49,12 +52,22 @@ class Schema:
         """
         return self._check(data, self._template, strict=strict)
 
+    def validate_memory(self, mem: "Memory", strict: bool = False) -> bool:
+        """Validate a Memory instance directly.
+
+        Args:
+            mem: The Memory instance to validate.
+            strict: If True, extra keys in memory not in schema are rejected.
+        """
+        return self.validate(mem.to_dict(), strict=strict)
+
     def _check(self, data: Any, template: Any, strict: bool = False) -> bool:
         if isinstance(template, dict):
             if not isinstance(data, dict):
                 return False
             if strict:
-                extra = set(data.keys()) - set(template.keys())
+                template_keys_clean = {k[1:] if k.startswith("!") else k for k in template.keys()}
+                extra = set(data.keys()) - template_keys_clean
                 if extra:
                     return False
             for key, expected in template.items():

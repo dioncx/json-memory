@@ -65,6 +65,32 @@ class Memory:
                 return default
         return node
 
+    def get_or_set(self, path: str, default: Any) -> Any:
+        """Get value at path, or set and return default if missing."""
+        result = self.get(path, _MISSING)
+        if result is _MISSING:
+            self.set(path, default)
+            return default
+        return result
+
+    def increment(self, path: str, delta: int = 1) -> int:
+        """Atomically increment a numeric value at path (initializes to 0 if missing)."""
+        current = self.get(path, 0)
+        if not isinstance(current, (int, float)):
+            current = 0
+        new_val = current + delta
+        self.set(path, new_val)
+        return new_val
+
+    def touch(self, path: str, timestamp: float = None) -> "Memory":
+        """Set a timestamp at path. Defaults to time.time()."""
+        ts = timestamp if timestamp is not None else time.time()
+        return self.set(path, ts)
+
+    def batch_get(self, paths: list[str], default: Any = None) -> dict:
+        """Get multiple paths at once. Returns {path: value} dict."""
+        return {p: self.get(p, default) for p in paths}
+
     def set(self, path: str, value: Any) -> "Memory":
         """Set a value by dotted path. Creates intermediate dicts as needed.
 
@@ -111,7 +137,6 @@ class Memory:
         
         for key in keys[:-1]:
             if isinstance(node, dict) and key in node:
-                parent = node
                 node = node[key]
                 stack.append((key, node))
             else:
@@ -171,7 +196,6 @@ class Memory:
 
     def merge(self, data: dict, prefix: str = "") -> int:
         """Merge a dict into memory at an optional prefix path. Alias: update().
-        ...
 
         Atomic: either all keys merge or none do (rollback on overflow).
         Returns number of keys merged.
@@ -225,7 +249,7 @@ class Memory:
 
     def to_dict(self) -> dict:
         """Return the full memory as a plain dict."""
-        return json.loads(json.dumps(self._data))
+        return copy.deepcopy(self._data)
 
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""

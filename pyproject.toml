@@ -32,3 +32,12 @@ dev = ["pytest>=8.0", "pytest-cov", "black", "isort", "mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39"]
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+ignore_missing_imports = true

@@ -560,3 +560,101 @@ class TestWeightGate:
         gate.disable()
         r = repr(gate)
         assert "[OFF]" in r
+
+
+# ── New Feature & Bug Fix Tests ───────────────────────────────────
+
+def test_schema_strict_with_required_fields():
+    """Test bug fix for strict mode failing with '!' prefix keys."""
+    schema = Schema({"!user": {"!name": "str"}})
+    # This should now pass in strict mode
+    assert schema.validate({"user": {"name": "Alice"}}, strict=True) is True
+    # Extra keys should still fail
+    assert schema.validate({"user": {"name": "Alice", "age": 30}}, strict=True) is False
+
+def test_memory_clear_edge_cases():
+    mem = Memory()
+    mem.set("a.b", 1)
+    # Clear non-existent path should be a no-op
+    mem.clear("x.y.z")
+    assert mem.get("a.b") == 1
+    # Clear empty string should wipe everything
+    mem.clear("")
+    assert mem.export() == "{}"
+
+def test_synapse_mutation_safety():
+    """Test that to_dict() returns deep copies of nested structures."""
+    s = Synapse()
+    s.link("a", ["b"])
+    data = s.to_dict()
+    # Mutate the returned dict
+    data["links"]["a"].append("c")
+    # Original should NOT be changed
+    assert "c" not in s._links["a"]
+
+def test_synapse_rename_concept():
+    s = Synapse()
+    s.link("a", ["b"], weights={"b": 0.8})
+    s._frequencies["a"]["b"] = 5
+    s._metadata["a"] = {"note": "test"}
+    
+    success = s.rename_concept("a", "alpha")
+    assert success is True
+    assert "a" not in s._links
+    assert "alpha" in s._links
+    assert "b" in s._links["alpha"]
+    assert s.get_weight("alpha", "b") == 0.8
+    assert s._frequencies["alpha"]["b"] == 5
+    assert s._metadata["alpha"]["note"] == "test"
+    # Check that neighbor's reference is updated
+    assert "alpha" in s._links["b"]
+    assert "a" not in s._links["b"]
+
+def test_synapse_subgraph():
+    s = Synapse()
+    s.link("a", ["b", "c"], bidirectional=False)
+    s.link("b", ["c"], bidirectional=False)
+    s.link("c", ["d"], bidirectional=False)
+    
+    sub = s.subgraph(["a", "b", "c"])
+    assert "a" in sub._links
+    assert "b" in sub._links
+    assert "c" in sub._links
+    assert "d" not in sub._links
+    # 'a' should only link to 'b' and 'c' (both in subgraph)
+    assert sorted(sub._links["a"]) == ["b", "c"]
+    # 'c' should link to NOTHING (since 'd' is not in subgraph)
+    assert sub._links["c"] == []
+
+def test_memory_get_or_set():
+    mem = Memory()
+    val = mem.get_or_set("user.name", "Alice")
+    assert val == "Alice"
+    assert mem.get("user.name") == "Alice"
+    
+    val2 = mem.get_or_set("user.name", "Bob")
+    assert val2 == "Alice"  # Already set
+
+def test_memory_increment():
+    mem = Memory()
+    assert mem.increment("hits") == 1
+    assert mem.increment("hits") == 2
+    assert mem.increment("hits", delta=5) == 7
+    
+    # Test on non-numeric
+    mem.set("label", "text")
+    assert mem.increment("label") == 1
+
+def test_memory_batch_get():
+    mem = Memory()
+    mem.set("a", 1).set("b", 2)
+    results = mem.batch_get(["a", "b", "c"], default=0)
+    assert results == {"a": 1, "b": 2, "c": 0}
+
+def test_schema_validate_memory():
+    mem = Memory()
+    mem.set("u.n", "Alice")
+    schema = Schema({"u": {"n": "str"}})
+    assert schema.validate_memory(mem) is True
+    mem.set("u.n", 123)
+    assert schema.validate_memory(mem) is False
