@@ -269,8 +269,18 @@ class SmartMemory:
         self._meta_path = self.path.with_suffix('.meta.json')
         self._lock = threading.RLock()
 
+        # Episodic memory: timeline of conversation topics
+        self._episodes: list[dict] = []
+        self._episodes_path = self.path.with_suffix('.episodes.json')
+        self._max_episodes = 100
+
+        # Conversation context: tracks active topics in current session
+        self._active_topics: list[str] = []
+        self._turn_count = 0
+
         # Load metadata
         self._load_meta()
+        self._load_episodes()
 
         # Initialize meta for existing data
         for p in self.mem.paths():
@@ -371,60 +381,6 @@ class SmartMemory:
             # Without a query: recency + frequency only
             return 0.6 * recency + 0.4 * frequency
 
-    def recall_relevant(self, query: str = None, max_results: int = None,
-                        min_score: float = 0.1) -> dict:
-        """Retrieve only facts relevant to the current context.
-
-        Scores all paths, returns top-N by relevance. This is the core
-        improvement over injecting the entire memory into prompts.
-
-        Args:
-            query: User's message or query string.
-            max_results: Override default max results.
-            min_score: Minimum score threshold.
-
-        Returns:
-            Dict of {path: value} for relevant facts, ordered by score.
-        """
-        max_results = max_results or self.max_results
-        now = time.time()
-        query_tokens = _normalize_tokens(query) if query else set()
-
-        scored = []
-        for path in self.mem.paths():
-            s = self.score(path, query_tokens, now)
-            scored.append((s, path, self._meta.get(path)))
-
-        # Smart filtering: when query has strong matches, suppress noise
-        if query_tokens:
-            # Find the max keyword score among all paths
-            max_keyword = 0.0
-            for _, path, meta in scored:
-                if meta:
-                    kw = _keyword_relevance(meta.tokens, query_tokens)
-                    max_keyword = max(max_keyword, kw)
-
-            # If there are strong keyword matches, apply adaptive threshold
-            if max_keyword > 0.15:
-                # Only keep items with meaningful keyword overlap or high recency
-                adaptive_threshold = max(min_score, max_keyword * 0.3)
-                scored = [(s, p, m) for s, p, m in scored if s >= adaptive_threshold]
-            else:
-                # No strong matches — fall back to recency/frequency
-                scored = [(s, p, m) for s, p, m in scored if s >= min_score]
-        else:
-            scored = [(s, p, m) for s, p, m in scored if s >= min_score]
-
-        scored.sort(reverse=True)
-        result = {}
-        for score, path, _ in scored[:max_results]:
-            val = self.mem.get(path)
-            if val is not None:
-                result[path] = val
-                self._touch(path)
-
-        return result
-
     def prompt_context(self, query: str = None, max_results: int = None,
                        format_fn=None) -> str:
         """Generate lean prompt context from relevant facts only.
@@ -516,6 +472,220 @@ class SmartMemory:
         if any(w in v_lower for w in ['prefer', 'like', 'use']):
             return 'user.preferences'
         return 'user.notes'
+
+    # ── Episodic Memory ──────────────────────────────────────────────
+
+    def log_episode(self, topic: str, summary: str = None, paths: list[str] = None):
+        """Log a conversation episode for timeline-based recall.
+
+        Use this to track what was discussed, so later queries like
+        "what did we talk about regarding the bot?" can find it.
+
+        Args:
+            topic: Topic keyword (e.g. "bot", "deployment", "PyPI").
+            summary: Brief description of what was discussed.
+            paths: Memory paths relevant to this episode.
+        """
+        with self._lock:
+            episode = {
+                'topic': topic.lower(),
+                'summary': summary or topic,
+                'paths': paths or [],
+                'timestamp': time.time(),
+                'turn': self._turn_count,
+            }
+            self._episodes.append(episode)
+
+            # Trim old episodes
+            if len(self._episodes) > self._max_episodes:
+                self._episodes = self._episodes[-self._max_episodes:]
+
+            # Track active topic
+            if topic.lower() not in self._active_topics:
+                self._active_topics.insert(0, topic.lower())
+                self._active_topics = self._active_topics[:10]  # keep last 10
+
+            self._save_episodes()
+
+    def recall_episodes(self, topic: str = None, max_age_seconds: float = 86400,
+                        limit: int = 5) -> list[dict]:
+        """Find past conversation episodes by topic or recency.
+
+        Solves: "what did we discuss about the bot yesterday?"
+
+        Args:
+            topic: Filter by topic keyword. None = most recent episodes.
+            max_age_seconds: Only episodes within this window (default: 24h).
+            limit: Max episodes to return.
+
+        Returns:
+            List of episode dicts with topic, summary, timestamp, paths.
+        """
+        now = time.time()
+        cutoff = now - max_age_seconds
+
+        candidates = [ep for ep in self._episodes if ep['timestamp'] >= cutoff]
+
+        if topic:
+            topic_lower = topic.lower()
+            # Token-overlap scoring for topic matching
+            topic_tokens = set(re.findall(r'\w{2,}', topic_lower))
+            scored = []
+            for ep in candidates:
+                ep_tokens = set(re.findall(r'\w{2,}', ep['topic']))
+                overlap = len(topic_tokens & ep_tokens) / max(len(topic_tokens), 1)
+                # Also check summary
+                summary_tokens = set(re.findall(r'\w{2,}', ep.get('summary', '').lower()))
+                summary_overlap = len(topic_tokens & summary_tokens) / max(len(topic_tokens), 1)
+                score = max(overlap, summary_overlap * 0.5)
+                if score > 0:
+                    scored.append((score, ep))
+            scored.sort(reverse=True)
+            return [ep for _, ep in scored[:limit]]
+
+        # No topic filter: return most recent
+        candidates.sort(key=lambda ep: ep['timestamp'], reverse=True)
+        return candidates[:limit]
+
+    @property
+    def active_topics(self) -> list[str]:
+        """Topics discussed in current session."""
+        return list(self._active_topics)
+
+    def advance_turn(self):
+        """Call once per conversation turn. Tracks session context."""
+        self._turn_count += 1
+
+    # ── Hybrid Fallback ──────────────────────────────────────────────
+
+    def recall_relevant(self, query: str = None, max_results: int = None,
+                        min_score: float = 0.1, fallback: bool = True) -> dict:
+        """Retrieve only facts relevant to the current context.
+
+        Scores all paths, returns top-N by relevance. This is the core
+        improvement over injecting the entire memory into prompts.
+
+        Args:
+            query: User's message or query string.
+            max_results: Override default max results.
+            min_score: Minimum score threshold.
+            fallback: If True and no strong matches, boost recent/active topics.
+
+        Returns:
+            Dict of {path: value} for relevant facts, ordered by score.
+        """
+        max_results = max_results or self.max_results
+        now = time.time()
+        query_tokens = _normalize_tokens(query) if query else set()
+
+        scored = []
+        for path in self.mem.paths():
+            s = self.score(path, query_tokens, now)
+            scored.append((s, path, self._meta.get(path)))
+
+        # Smart filtering: when query has strong matches, suppress noise
+        if query_tokens:
+            # Find the max keyword score among all paths
+            max_keyword = 0.0
+            for _, path, meta in scored:
+                if meta:
+                    kw = _keyword_relevance(meta.tokens, query_tokens)
+                    max_keyword = max(max_keyword, kw)
+
+            # If there are strong keyword matches, apply adaptive threshold
+            if max_keyword > 0.15:
+                # Only keep items with meaningful keyword overlap or high recency
+                adaptive_threshold = max(min_score, max_keyword * 0.3)
+                scored = [(s, p, m) for s, p, m in scored if s >= adaptive_threshold]
+            elif fallback and self._active_topics:
+                # No strong matches — boost paths related to active topics
+                scored = self._boost_by_active_topics(scored, query_tokens, now)
+                scored = [(s, p, m) for s, p, m in scored if s >= min_score * 0.5]
+            else:
+                scored = [(s, p, m) for s, p, m in scored if s >= min_score]
+        else:
+            scored = [(s, p, m) for s, p, m in scored if s >= min_score]
+
+        scored.sort(reverse=True)
+        result = {}
+        for score, path, _ in scored[:max_results]:
+            val = self.mem.get(path)
+            if val is not None:
+                result[path] = val
+                self._touch(path)
+
+        return result
+
+    def _boost_by_active_topics(self, scored, query_tokens, now):
+        """When keyword match is weak, boost paths related to active session topics."""
+        # Get tokens from active topics
+        topic_tokens = set()
+        for topic in self._active_topics[:5]:
+            topic_tokens.update(re.findall(r'\w{2,}', topic.lower()))
+
+        boosted = []
+        for score, path, meta in scored:
+            if meta and topic_tokens:
+                topic_overlap = _keyword_relevance(meta.tokens, topic_tokens)
+                if topic_overlap > 0:
+                    score = score + 0.15 * topic_overlap  # moderate boost
+            boosted.append((score, path, meta))
+        return boosted
+
+    # ── Context Window Manager ───────────────────────────────────────
+
+    def build_context(self, query: str = None, max_chars: int = 2000,
+                      include_episodes: bool = True) -> str:
+        """Build complete agent context: relevant facts + recent episodes.
+
+        This is the "all-in-one" method. Call this instead of prompt_context()
+        when you want maximum recall with minimum tokens.
+
+        Args:
+            query: User's current message.
+            max_chars: Character budget for the entire context block.
+            include_episodes: Include recent conversation episodes.
+
+        Returns:
+            Formatted context string ready for prompt injection.
+        """
+        parts = []
+        budget_remaining = max_chars
+
+        # 1. Relevant facts (primary)
+        relevant = self.recall_relevant(query, max_results=6, fallback=True)
+        if relevant:
+            fact_lines = []
+            for path, value in relevant.items():
+                line = f"- {path}: {_value_to_str(value)}"
+                if len('\n'.join(fact_lines + [line])) <= budget_remaining * 0.7:
+                    fact_lines.append(line)
+            if fact_lines:
+                parts.append("## Memory\n" + "\n".join(fact_lines))
+                budget_remaining -= sum(len(l) for l in fact_lines)
+
+        # 2. Recent episodes (secondary, if space allows)
+        if include_episodes and budget_remaining > 100:
+            episodes = self.recall_episodes(
+                topic=query if query else None,
+                max_age_seconds=3600,  # last hour
+                limit=3
+            )
+            if episodes:
+                ep_lines = []
+                for ep in episodes:
+                    line = f"- [{_time_ago(ep['timestamp'])}] {ep['summary']}"
+                    if len('\n'.join(ep_lines + [line])) <= budget_remaining:
+                        ep_lines.append(line)
+                if ep_lines:
+                    parts.append("## Recent Topics\n" + "\n".join(ep_lines))
+
+        # 3. Active topics hint (tiny, always included)
+        if self._active_topics and budget_remaining > 50:
+            topics = ", ".join(self._active_topics[:5])
+            parts.append(f"## Active: {topics}")
+
+        return "\n\n".join(parts)
 
     # ── Associative Memory ───────────────────────────────────────────
 
@@ -668,3 +838,50 @@ class SmartMemory:
             self._meta_path.write_text(json.dumps(raw, ensure_ascii=False), encoding='utf-8')
         except Exception:
             pass
+
+    def _load_episodes(self):
+        """Load episodic memory from disk."""
+        if self._episodes_path.exists():
+            try:
+                self._episodes = json.loads(self._episodes_path.read_text(encoding='utf-8'))
+                # Rebuild active topics from recent episodes
+                recent = sorted(self._episodes, key=lambda e: e.get('timestamp', 0), reverse=True)
+                seen = set()
+                for ep in recent[:10]:
+                    topic = ep.get('topic', '').lower()
+                    if topic and topic not in seen:
+                        seen.add(topic)
+                        self._active_topics.append(topic)
+            except Exception:
+                self._episodes = []
+
+    def _save_episodes(self):
+        """Persist episodic memory to disk."""
+        try:
+            self._episodes_path.parent.mkdir(parents=True, exist_ok=True)
+            self._episodes_path.write_text(
+                json.dumps(self._episodes, ensure_ascii=False), encoding='utf-8'
+            )
+        except Exception:
+            pass
+
+
+def _value_to_str(value) -> str:
+    """Convert value to readable string."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _time_ago(timestamp: float) -> str:
+    """Human-readable time ago."""
+    seconds = time.time() - timestamp
+    if seconds < 60:
+        return "just now"
+    if seconds < 3600:
+        return f"{int(seconds / 60)}m ago"
+    if seconds < 86400:
+        return f"{int(seconds / 3600)}h ago"
+    return f"{int(seconds / 86400)}d ago"
