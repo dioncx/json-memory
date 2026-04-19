@@ -471,8 +471,6 @@ class WeightGate:
                     unmentioned_assocs.append(assoc)
 
             # Boost mentioned associations
-            if mentioned_assocs:
-                print(f"DEBUG: Concept {concept} has mentioned_assocs: {mentioned_assocs}")
             for assoc in mentioned_assocs:
                 self._synapse.strengthen(concept, assoc, self.boost_rate)
                 detected.setdefault(concept, []).append(f"{assoc}↑")
