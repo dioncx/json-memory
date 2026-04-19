@@ -658,3 +658,72 @@ def test_schema_validate_memory():
     assert schema.validate_memory(mem) is True
     mem.set("u.n", 123)
     assert schema.validate_memory(mem) is False
+
+
+# ── Phase 3: Advanced Architecture Tests ─────────────────────────
+
+def test_memory_watchers():
+    mem = Memory()
+    events = []
+    
+    def on_change(path, val):
+        events.append((path, val))
+        
+    mem.watch("user.profile", on_change)
+    
+    # Trigger on exact match
+    mem.set("user.profile", {"name": "Alice"})
+    assert len(events) == 1
+    assert events[-1] == ("user.profile", {"name": "Alice"})
+    
+    # Trigger on child update (non-exact)
+    mem.set("user.profile.age", 30)
+    assert len(events) == 2
+    assert events[-1] == ("user.profile.age", 30)
+    
+    # Exact watch
+    exact_events = []
+    mem.watch("status", lambda p, v: exact_events.append(v), exact=True)
+    mem.set("status.active", True)
+    assert len(exact_events) == 0  # Should not trigger (it's a child)
+    mem.set("status", "ready")
+    assert len(exact_events) == 1
+    assert exact_events[0] == "ready"
+
+def test_synapse_strongest_path():
+    s = Synapse()
+    # Path 1: a -> b -> c (weights: 0.1, 0.1) -> weak
+    # Path 2: a -> d -> c (weights: 0.9, 0.9) -> strong
+    s.link("a", ["b", "d"], bidirectional=False, weights={"b": 0.1, "d": 0.9})
+    s.link("b", ["c"], bidirectional=False, weights={"c": 0.1})
+    s.link("d", ["c"], bidirectional=False, weights={"c": 0.9})
+    
+    # BFS find_path might return either 2-hop path (non-deterministic if order same)
+    # find_strongest_path MUST return [a, d, c]
+    path = s.find_strongest_path("a", "c")
+    assert path == ["a", "d", "c"]
+
+def test_weightgate_ngrams():
+    s = Synapse()
+    s.link("machine learning", ["ai", "python"])
+    # Default ngram_size=1 would miss "machine learning"
+    gate = WeightGate(synapse=s, enabled=True, ngram_size=2)
+    
+    # Process text mentioning the bigram + an association to trigger a change
+    changes = gate.process_input("I work on machine learning and ai")
+    assert "machine learning" in changes
+    assert "ai↑" in changes["machine learning"]
+
+def test_schema_typed_lists():
+    # List of strings
+    schema = Schema({"tags": ["str"]})
+    assert schema.validate({"tags": ["a", "b", "c"]}) is True
+    assert schema.validate({"tags": ["a", 1, "c"]}) is False
+    
+    # List of objects
+    schema_nested = Schema({"users": [{"name": "str", "!age": "int"}]})
+    assert schema_nested.validate({"users": [{"name": "A", "age": 1}]}) is True
+    assert schema_nested.validate({"users": [{"name": "A"}]}) is False  # Missing required '!age'
+    
+    # Default skeleton for lists
+    assert schema.defaults() == {"tags": []}

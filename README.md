@@ -100,8 +100,10 @@ print(mem.stats())
 | Method | Description |
 |--------|-------------|
 | `mem.set(path, value)` | Set value by dotted path, returns self |
-| `mem.get(path, default)` | Get value by dotted path |
-| `mem.get_or_set(path, default)` | Get value or set/return default if missing |
+| `batch_get(paths, default)` | Get multiple values in one call. |
+| `watch(path, callback)` | React to state changes (Reactive Memory). |
+| `export()` | Export data to JSON-serializable dict. |
+| `mem.get(path, default)` | Get value or set/return default if missing |
 | `mem.increment(path, delta)` | Atomically increment a numeric value |
 | `mem.touch(path, ts)` | Set current timestamp at path |
 | `mem.delete(path, prune)` | Delete path, optionally prune empty parents |
@@ -121,16 +123,23 @@ print(mem.stats())
 | `brain.find_path(s, e)` | Find shortest path between concepts |
 | `brain.hubs()` | Find the most connected concepts |
 | `brain.merge(other)` | Combine two independent graphs |
-| `brain.rename_concept(o, n)` | Rename concept preserving all links |
-| `brain.subgraph(concepts)` | Extract localized context |
+| `brain.rename_concept(old, new)` | Rename a concept globally. |
+| `subgraph(concepts)` | Extract a new Synapse with only related nodes. |
+| `find_strongest_path(a, b)` | Find the highest-weight path using Dijkstra. |
 
-### Schema
+### Schema Validation
 | Method | Description |
-|--------|-------------|
-| `schema.validate(data)` | Validate dict against template |
-| `schema.validate_memory(m)` | Validate Memory instance directly |
-| `schema.diff(data)` | Get missing and extra keys |
-| `schema.defaults()` | Generate skeleton from schema |
+| :--- | :--- |
+| `validate(data, strict)` | Validate a dict against the schema. |
+| `validate_memory(mem)` | Validate a `Memory` instance. |
+| `defaults()` | Generate a skeleton dict with default types/lists. |
+
+### WeightGate (Context Aware)
+| Method | Description |
+| :--- | :--- |
+| `process_input(text)` | Strengthen concepts mentioned in prose. |
+| `process_output(text)` | Strengthen concepts produced by agent. |
+| `ngram_size` (Config) | Detect multi-word concepts (e.g. "machine learning"). |
 
 ## Synapse Mode (Associative Memory)
 

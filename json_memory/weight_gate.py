@@ -288,31 +288,51 @@ def _candidates(word: str) -> set[str]:
     return result
 
 
-def _tokenize(text: str) -> set[str]:
-    """Extract all word forms from text as a flat set of candidates."""
-    raw_tokens = re.findall(r'\b\w+\b', text.lower())
+def _tokenize(text: str, ngram_size: int = 1) -> set[str]:
+    """Extract all word forms and n-grams from text as a flat set of candidates."""
+    words = re.findall(r'\b\w+\b', text.lower())
     all_forms = set()
-    for token in raw_tokens:
-        all_forms.update(_candidates(token))
+    
+    # 1. Unigrams + Stems
+    for word in words:
+        all_forms.update(_candidates(word))
+        
+    # 2. N-grams (bi-grams, tri-grams, etc.)
+    for n in range(2, ngram_size + 1):
+        for i in range(len(words) - n + 1):
+            ngram = " ".join(words[i:i + n])
+            all_forms.add(ngram)
+            
     return all_forms
 
 
 def _matches_term(tokens: set[str], term: str, cache: dict[str, set[str]] = None) -> bool:
     """Check if a term (concept or association) appears in the token set.
 
-    Compares candidate sets for overlap — if any root form of the term
-    matches any root form found in text, it's a hit.
+    For single words: compares candidate sets for overlap.
+    For multi-word: checks if the exact phrase exists in the token n-grams.
     """
+    term_lower = term.lower().replace("_", " ")
+    
+    if " " in term_lower:
+        # Multi-word concept: 
+        # 1. Try exact n-gram match (highest accuracy)
+        if term_lower in tokens:
+            return True
+        # 2. Fallback: if all words are present AND either ngram_size=1 
+        #    or we want flexible matching. This restores old behavior.
+        parts = term_lower.split()
+        part_candidates = []
+        for p in parts:
+            part_candidates.append(_candidates(p))
+            
+        return all(any(c in tokens for c in cand_set) for cand_set in part_candidates)
+
+    # Single-word concept: check stem overlap
     if cache is not None and term in cache:
         term_candidates = cache[term]
     else:
-        term_lower = term.lower().replace("_", " ")
-        parts = term_lower.split()
-
-        term_candidates = set()
-        for part in parts:
-            term_candidates.update(_candidates(part))
-        
+        term_candidates = _candidates(term_lower)
         if cache is not None:
             cache[term] = term_candidates
 
@@ -346,7 +366,8 @@ class WeightGate:
 
     def __init__(self, path: str = None, synapse: Synapse = None,
                  decay_rate: float = 0.01, boost_rate: float = 0.05,
-                 min_weight: float = 0.1, enabled: bool = False):
+                 min_weight: float = 0.1, enabled: bool = False,
+                 ngram_size: int = 1):
         if path is not None and synapse is not None:
             raise ValueError("Provide either 'path' or 'synapse', not both")
         if path is None and synapse is None:
@@ -358,6 +379,7 @@ class WeightGate:
         self.boost_rate = boost_rate
         self.min_weight = min_weight
         self._enabled = enabled
+        self.ngram_size = ngram_size
         self._interactions = 0
         self._created = time.time()
         self._term_token_cache: dict[str, set[str]] = {}
@@ -428,7 +450,7 @@ class WeightGate:
         if not self._enabled:
             return {}
 
-        tokens = _tokenize(text)
+        tokens = _tokenize(text, ngram_size=self.ngram_size)
         self._interactions += 1
         detected = {}
 
@@ -468,6 +490,8 @@ class WeightGate:
         self._save()
         return detected
 
+
+
     def process_output(self, text: str) -> dict:
         """Process agent output — strengthen concepts that were actually used.
 
@@ -477,7 +501,7 @@ class WeightGate:
         if not self._enabled:
             return {}
 
-        tokens = _tokenize(text)
+        tokens = _tokenize(text, ngram_size=self.ngram_size)
         strengthened = {}
 
         for concept in self._synapse.concepts():

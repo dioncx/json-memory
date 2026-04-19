@@ -7,6 +7,7 @@ Mimics how human memory works: thinking of "coffee" activates
 
 import json
 import copy
+import heapq
 from pathlib import Path
 from typing import Optional
 from collections import deque
@@ -286,6 +287,41 @@ class Synapse:
             "count": len(direct),
             "is_hub": len(direct) >= 5,  # 5+ connections = hub node
         }
+
+    def find_strongest_path(self, start: str, end: str) -> list[str]:
+        """Find the path with the highest conceptual strength (Dijkstra).
+        
+        Uses weight-based distance: dist = 1 - weight.
+        Returns list of concepts from start to end, or empty if no path.
+        """
+        if start not in self._links:
+            return []
+            
+        # pq: (distance, current_node, path)
+        pq = [(0.0, start, [start])]
+        visited = {start: 0.0}
+        
+        while pq:
+            dist, current, path = heapq.heappop(pq)
+            
+            if current == end:
+                return path
+                
+            if dist > visited.get(current, float('inf')):
+                continue
+                
+            for neighbor in self._links.get(current, []):
+                # Strength depends on the weight of the link current -> neighbor
+                weight = self.get_weight(current, neighbor)
+                new_dist = dist + (1.0 - weight)
+                
+                if new_dist < visited.get(neighbor, float('inf')):
+                    visited[neighbor] = new_dist
+                    new_path = list(path)
+                    new_path.append(neighbor)
+                    heapq.heappush(pq, (new_dist, neighbor, new_path))
+                    
+        return []
 
     def find_path(self, start: str, end: str, max_depth: int = 5) -> Optional[list]:
         """Find shortest path between two concepts (BFS).

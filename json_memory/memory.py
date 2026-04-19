@@ -7,7 +7,8 @@ Provides dotted-path access to nested JSON data with minified storage.
 import json
 import time
 import copy
-from typing import Any, Optional, Union
+import sys
+from typing import Any, Optional, Union, Callable
 
 
 class _Missing:
@@ -38,6 +39,42 @@ class Memory:
         self.max_chars = max_chars
         self._data: dict = data if data is not None else {}
         self._cache: Optional[str] = None
+        self._watchers: dict[str, list[tuple[Callable, bool]]] = {}
+
+    def watch(self, path: str, callback: Callable[[str, Any], None], exact: bool = False) -> "Memory":
+        """Register a callback triggered when path (or sub-path) is modified.
+
+        Args:
+            path: Dotted path to watch.
+            callback: Function taking (path, new_value).
+            exact: If True, only triggers on this exact path.
+                   If False, triggers on this path and any children.
+        """
+        if path not in self._watchers:
+            self._watchers[path] = []
+        self._watchers[path].append((callback, exact))
+        return self
+
+    def unwatch(self, path: str, callback: Callable) -> "Memory":
+        """Remove a previously registered callback."""
+        if path in self._watchers:
+            self._watchers[path] = [w for w in self._watchers[path] if w[0] != callback]
+            if not self._watchers[path]:
+                del self._watchers[path]
+        return self
+
+    def _trigger_watchers(self, mutated_path: str, value: Any):
+        """Internal: dispatch events to watchers."""
+        for watch_path, handlers in self._watchers.items():
+            for callback, exact in handlers:
+                is_match = (mutated_path == watch_path) or (
+                    not exact and mutated_path.startswith(watch_path + ".")
+                )
+                if is_match:
+                    try:
+                        callback(mutated_path, value)
+                    except Exception as e:
+                        print(f"Memory watcher error on {watch_path}: {e}", file=sys.stderr)
 
     def _invalidate(self):
         """Invalidate the export cache."""
@@ -122,6 +159,7 @@ class Memory:
                 f"Memory overflow: setting '{path}' would exceed "
                 f"{self.max_chars} chars"
             )
+        self._trigger_watchers(path, value)
         return self
 
     def delete(self, path: str, prune: bool = False) -> bool:
@@ -156,6 +194,7 @@ class Memory:
                         break
 
             self._invalidate()
+            self._trigger_watchers(path, None)
             return True
         return False
 
@@ -175,6 +214,7 @@ class Memory:
                 node[keys[-1]] = {}
         
         self._invalidate()
+        self._trigger_watchers(path, None)
         return self
 
     def has(self, path: str) -> bool:
@@ -217,12 +257,24 @@ class Memory:
                     f"Memory overflow: merging {count} keys would exceed "
                     f"{self.max_chars} chars"
                 )
+            
+            # Trigger watchers for each merged key
+            self._trigger_merge_watchers(data, prefix)
             return count
         except ValueError:
             # Rollback entire batch — all or nothing
             self._data = snapshot
             self._invalidate()
             raise
+
+    def _trigger_merge_watchers(self, data: dict, prefix: str = ""):
+        """Internal: trigger watchers for a merge operation."""
+        for key, value in data.items():
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(value, dict):
+                self._trigger_merge_watchers(value, path)
+            else:
+                self._trigger_watchers(path, value)
 
     def update(self, data: dict, prefix: str = "") -> int:
         """Alias for merge()."""

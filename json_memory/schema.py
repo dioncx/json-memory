@@ -83,6 +83,18 @@ class Schema:
                     return False
             return True
 
+        if isinstance(template, list):
+            if not isinstance(data, list):
+                return False
+            if not template:  # Simple "list" check
+                return True
+            # Template list contains type/sub-template for items
+            item_template = template[0]
+            for item in data:
+                if not self._check(item, item_template, strict):
+                    return False
+            return True
+
         type_map = {
             "str": str,
             "int": int,
@@ -106,6 +118,8 @@ class Schema:
                 clean_k = k[1:] if k.startswith("!") else k
                 skeleton[clean_k] = self._skeleton(v)
             return skeleton
+        if isinstance(template, list):
+            return []
         return None
 
     def diff(self, data: dict) -> dict:
