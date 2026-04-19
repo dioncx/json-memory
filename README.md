@@ -221,7 +221,7 @@ mem.export()                 # minified JSON
 mem.stats()                  # size/utilization
 ```
 
-Full API docs: see [docs/API.md](docs/API.md) (coming soon) or read the source — it's well-commented.
+Full API docs: [docs/API.md](docs/API.md)
 
 ---
 
