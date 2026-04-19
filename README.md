@@ -94,6 +94,74 @@ print(mem.stats())
 # {"entries": 4, "chars_used": 146, "chars_max": 2000, "chars_free": 1854, "utilization": "7.3%"}
 ```
 
+## Agent Memory — Drop-In for Any LLM
+
+A ready-to-use memory layer for AI agents. Copy `examples/agent_memory.py` into your project, or use the pattern below.
+
+### 10-Line Agent Memory
+
+```python
+from json_memory import Memory
+
+mem = Memory(auto_flush_path="agent_memory.json", max_chars=5000)
+
+# Store facts
+mem.set("user.name", "Alice")
+mem.set("user.tz", "UTC+7")
+mem.set("session.task", "reviewing PR #42")
+
+# Recall
+print(mem.get("user.name"))  # → "Alice"
+
+# Inject into LLM prompt
+context = mem.export()  # → compact JSON string, ~100 chars
+```
+
+### Full Agent Memory Class
+
+The `examples/agent_memory.py` file provides a complete `AgentMemory` class with:
+
+- **Persistent storage** — survives restarts via auto-flush
+- **Dotted-path access** — `remember("user.name", "Alice")`, `recall("user.name")`
+- **Search** — `search("user.*")` returns all user-related facts
+- **Associative recall** — link concepts like a brain: `link("debugging", ["check_logs", "reproduce"])`
+- **Snapshots** — save/rollback state before risky operations
+- **TTL** — ephemeral data that auto-expires: `remember("token", "xyz", ttl=300)`
+- **Prompt injection** — `context()` returns compact JSON for system prompts
+
+```python
+from agent_memory import AgentMemory
+
+memory = AgentMemory("my_agent.json", max_chars=5000)
+
+# Store
+memory.remember("user.name", "Alice")
+memory.remember("user.preferences.style", "direct")
+memory.remember("session.temp_token", "xyz_123", ttl=300)  # expires in 5 min
+
+# Associative memory
+memory.link("debugging", ["check_logs", "reproduce", "git_bisect"])
+memory.associate("debugging")  # → ["check_logs", "reproduce", "git_bisect"]
+
+# Search
+memory.search("user.*")  # → {"user.name": "Alice", "user.preferences.style": "direct"}
+
+# Inject into system prompt
+system_prompt = f"You are an assistant.\n\n## Memory\n{memory.context()}"
+```
+
+### Works With Any Agent Framework
+
+| Framework | Integration |
+|-----------|-------------|
+| **Claude (API)** | Inject `memory.context()` into system prompt |
+| **OpenAI GPT** | Inject into system message, or use `Schema.to_openai_tools()` |
+| **OpenClaw** | Load as a tool — see `examples/agent_memory.py` |
+| **LangChain** | Custom memory class wrapping `AgentMemory` |
+| **Custom loop** | Call `remember()`/`recall()` in your agent loop |
+
+No lock-in. No dependencies. Just Python.
+
 ## API Reference
 
 ### Memory
@@ -391,31 +459,6 @@ mem.rollback("before_task") # Entire state (including TTLs) is restored
 
 ### Automatic Memory Fading (LRU)
 Prevent crashes when agents exceed their character budget. When  is hit, `json-memory` automatically "forgets" the oldest, least-accessed data.
-
-```python
-# Initialize with LRU eviction policy
-mem = Memory(max_chars=2000, eviction_policy="lru")
-
-# If you set a large object that pushes memory over 2000 chars,
-# the least-recently used keys are automatically deleted to make room.
-```
-
-### Auto-Flush Persistence
-Never lose a thought. Automatically sync state to a physical JSON file on every mutation.
-
-```python
-# Initialize with a flush path
-mem = Memory(auto_flush_path="agent_brain.json")
-
-# Any set(), delete(), or merge() will instantly sync to the file
-mem.set("tasks.current", "Analyzing logs...")
-# 'agent_brain.json' is updated immediately.
-```
-
-## Autonomous Resilience (Ph. 6)
-
-### Automatic Memory Fading (LRU)
-Prevent crashes when agents exceed their character budget. When `max_chars` is hit, `json-memory` automatically "forgets" the oldest, least-accessed data.
 
 ```python
 # Initialize with LRU eviction policy
