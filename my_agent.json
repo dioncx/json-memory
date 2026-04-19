@@ -1,1 +1,0 @@
-{"user":{"name":"Alice","handle":"@alice","timezone":"UTC+7","preferences":{"style":"direct and technical","language":"Python"}},"session":{"current_task":"reviewing PR #42","mood":"focused","temp_token":"xyz_123"},"skills":{"learned":["git-rebase","docker-compose","sql-joins"]},"project":{"repo":"github.com/alice/awesome-app","stack":["FastAPI","PostgreSQL","Redis"]}}
