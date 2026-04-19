@@ -9,7 +9,8 @@ Not as powerful as embeddings, but covers 80% of cases with zero deps.
 # This is the "cheat sheet" for semantic matching without ML
 CONCEPT_MAP = {
     # Identity
-    "who": ["name", "identity", "user", "person", "called"],
+    "who": ["name", "identity", "user", "person", "called", "background", "profession"],
+    "about": ["identity", "background", "info", "information", "detail"],
     "name": ["who", "identity", "user", "called", "person"],
     "identity": ["who", "name", "user"],
     
@@ -62,6 +63,19 @@ CONCEPT_MAP = {
     "error": ["bug", "issue", "problem", "fail", "broken", "crash"],
     "fix": ["repair", "patch", "solve", "debug", "resolve"],
     "log": ["debug", "trace", "output", "print"],
+    # Career / Professional
+    "career": ["job", "work", "profession", "professional", "employment", "role", "position", "occupation"],
+    "job": ["career", "work", "profession", "professional", "employment", "role", "position"],
+    "work": ["career", "job", "profession", "professional", "employment", "company", "office"],
+    "professional": ["career", "job", "work", "profession", "employment", "background", "experience"],
+    "profession": ["career", "job", "work", "professional", "employment", "background", "field"],
+    "background": ["history", "experience", "past", "career", "profession", "education", "qualification"],
+    "experience": ["background", "history", "skill", "expertise", "career"],
+    "employment": ["career", "job", "work", "company", "position"],
+    "education": ["degree", "university", "school", "qualification", "background", "study"],
+    "degree": ["education", "university", "qualification", "gpa", "bachelor", "master"],
+    "skill": ["ability", "expertise", "talent", "competency", "experience", "tech"],
+    "skills": ["ability", "expertise", "talent", "competency", "experience", "tech"],
     "config": ["settings", "options", "parameters", "env"],
     "api": ["endpoint", "request", "response", "key"],
     "key": ["api", "token", "secret", "credential", "auth"],

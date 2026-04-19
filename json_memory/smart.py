@@ -94,13 +94,40 @@ def _frequency_score(access_count: int, max_count: int) -> float:
     return math.log1p(access_count) / math.log1p(max_count)
 
 
-def _keyword_relevance(fact_tokens: set[str], query_tokens: set[str]) -> float:
-    """Jaccard-like overlap between fact and query tokens."""
+def _keyword_relevance(fact_tokens: set[str], query_tokens: set[str], 
+                          path_tokens: set[str] = None) -> float:
+    """Weighted overlap between fact and query tokens.
+    
+    Uses containment-based scoring instead of pure Jaccard to avoid
+    penalizing long fact values. Path tokens get 3x weight boost
+    since they carry semantic meaning about what the fact IS.
+    """
     if not fact_tokens or not query_tokens:
         return 0.0
+    
+    # Basic overlap
     intersection = fact_tokens & query_tokens
+    
+    # Path token boost: matching path tokens are more meaningful
+    # e.g., matching 'user' in 'user.profession' when query says 'who'
+    path_boost = 0.0
+    if path_tokens:
+        path_matches = path_tokens & query_tokens
+        path_boost = len(path_matches) * 0.15  # 15% per path token match
+    
+    # Containment: what fraction of query tokens appear in fact?
+    # Better than Jaccard for long facts
+    query_coverage = len(intersection) / len(query_tokens) if query_tokens else 0.0
+    
+    # Fact precision: what fraction of fact tokens match query?
+    # Use Jaccard as a precision component
     union = fact_tokens | query_tokens
-    return len(intersection) / len(union) if union else 0.0
+    precision = len(intersection) / len(union) if union else 0.0
+    
+    # Combined: favor coverage (did we find what user asked about?)
+    # with precision as tiebreaker and path boost as bonus
+    score = 0.5 * query_coverage + 0.3 * precision + path_boost
+    return min(score, 1.0)
 
 
 # ── Path Metadata ─────────────────────────────────────────────────────
@@ -369,7 +396,9 @@ class SmartMemory:
         # Keyword relevance
         keyword = 0.5  # default (neutral) when no query
         if query_tokens:
-            keyword = _keyword_relevance(meta.tokens, query_tokens)
+            # Extract path tokens for boosting
+                path_tokens = set(re.findall(r'\w{2,}', path.lower())) if path else set()
+                keyword = _keyword_relevance(meta.tokens, query_tokens, path_tokens)
 
         # Weighted combination
         if query_tokens:
@@ -377,8 +406,9 @@ class SmartMemory:
             if keyword > 0:
                 return 0.1 * recency + 0.05 * frequency + 0.85 * keyword
             else:
-                # No keyword match at all: very low base score
-                return 0.03 * recency + 0.02 * frequency
+                # No keyword match at all: suppress completely
+                # Recency/frequency without relevance is noise
+                return 0.0
         else:
             # Without a query: recency + frequency only
             return 0.6 * recency + 0.4 * frequency
@@ -645,7 +675,7 @@ class SmartMemory:
             # If there are strong keyword matches, apply adaptive threshold
             if max_keyword > 0.15:
                 # Only keep items with meaningful keyword overlap or high recency
-                adaptive_threshold = max(min_score, max_keyword * 0.3)
+                adaptive_threshold = max(min_score, max_keyword * 0.4)
                 scored = [(s, p, m) for s, p, m in scored if s >= adaptive_threshold]
             elif fallback and self._active_topics:
                 # No strong matches — boost paths related to active topics
@@ -787,13 +817,15 @@ class SmartMemory:
 
         recency = _recency_score(meta.last_accessed, now, self.recency_half_life)
         frequency = _frequency_score(meta.access_count, max_count)
-        keyword = _keyword_relevance(meta.tokens, query_tokens) if query_tokens else 0.5
+        # Extract path tokens for boosting
+        path_tokens = set(re.findall(r'\w{2,}', path.lower())) if path else set()
+        keyword = _keyword_relevance(meta.tokens, query_tokens, path_tokens) if query_tokens else 0.5
 
         if query_tokens:
             if keyword > 0:
                 final = 0.1 * recency + 0.05 * frequency + 0.85 * keyword
             else:
-                final = 0.03 * recency + 0.02 * frequency
+                final = 0.0  # No keyword match = suppress completely
         else:
             final = 0.6 * recency + 0.4 * frequency
 
