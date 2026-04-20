@@ -413,7 +413,14 @@ class SmartMemory:
         keyword = 0.5  # default (neutral) when no query
         if query_tokens:
             # Extract path tokens for boosting
-                path_tokens = set(re.findall(r'\w{2,}', path.lower())) if path else set()
+                # Split on dots and underscores to get individual words
+                path_tokens = set()
+                if path:
+                    # Split path into components, then tokenize each component
+                    for component in re.split(r'[._]', path.lower()):
+                        if component:
+                            tokens = set(re.findall(r'\w{2,}', component))
+                            path_tokens.update(tokens)
                 keyword = _keyword_relevance(meta.tokens, query_tokens, path_tokens)
 
         # Weighted combination

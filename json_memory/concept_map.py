@@ -87,6 +87,28 @@ CONCEPT_MAP = {
     "notify": ["alert", "message", "send", "telegram"],
     "cron": ["schedule", "timer", "interval", "periodic", "job"],
     "schedule": ["cron", "timer", "interval", "time"],
+    "talk": ["communication", "speak", "chat", "message", "conversation"],
+    "speak": ["communication", "talk", "chat", "message"],
+    "chat": ["communication", "talk", "speak", "message", "telegram"],
+    "conversation": ["communication", "talk", "chat", "dialogue"],
+    
+    # Lessons / Mistakes
+    "mistakes": ["lesson", "error", "problem", "issue", "failure", "wrong"],
+    "lesson": ["mistakes", "learning", "experience", "knowledge", "wisdom", "remember"],
+    "learning": ["lesson", "education", "study", "knowledge", "experience"],
+    "remember": ["memory", "recall", "forget", "note", "save"],
+    "forget": ["remember", "memory", "lost", "missing"],
+    
+    # Projects (plural)
+    "projects": ["project", "repo", "repository", "code", "application", "software"],
+    
+    # Automation
+    "auto": ["automatic", "automated", "restart", "systemd", "service", "daemon"],
+    "automatic": ["auto", "automated", "restart", "systemd", "service"],
+    "automatically": ["auto", "automatic", "automated", "restart", "systemd"],
+    "automated": ["auto", "automatic", "automatically", "restart", "systemd", "service", "daemon"],
+    "systemd": ["service", "daemon", "auto", "restart", "systemctl"],
+    "daemon": ["service", "systemd", "auto", "background", "process"],
 }
 
 
