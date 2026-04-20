@@ -8,3 +8,8 @@ build/
 .venv/
 my_agent.json
 json_memory[semantic]
+
+# Runtime memory files
+smart_memory.json
+smart_memory.meta.json
+*.cold.json

@@ -42,7 +42,9 @@ class Memory:
     def __init__(self, data: Optional[dict] = None, max_chars: int = 2200, 
                  eviction_policy: str = "error", auto_flush_path: Optional[str] = None,
                  storage_adapter: Optional[StorageAdapter] = None,
-                 track_history: bool = False, redact_keys: Optional[List[str]] = None):
+                 track_history: bool = False, redact_keys: Optional[List[str]] = None,
+                 on_evict: Optional[Callable[[str, Any], None]] = None,
+                 cold_storage_path: Optional[str] = None):
         self._data = data or {}
         self.max_chars = max_chars
         self.eviction_policy = eviction_policy
@@ -50,6 +52,9 @@ class Memory:
         self.storage_adapter = storage_adapter
         self.track_history = track_history
         self.redact_keys = redact_keys or []
+        self.on_evict = on_evict
+        self.cold_storage_path = cold_storage_path
+        self._cold_store: Optional['Memory'] = None  # Lazy-loaded cold storage
         self._lock = threading.RLock()
         self._audit_log: list[dict] = []
         self._cache: Optional[str] = None
@@ -205,7 +210,7 @@ class Memory:
 
             # Check budget
             if len(self.export()) > self.max_chars:
-                if self.eviction_policy == "lru":
+                if self.eviction_policy in ("lru", "lru-archive"):
                     # Get all leaf paths, excluding the one we just set
                     all_paths = [p for p in self.paths() if p != path]
                     # Sort by access time (oldest first)
@@ -214,6 +219,19 @@ class Memory:
                     for p in sorted_paths:
                         if len(self.export()) <= self.max_chars:
                             break
+                        evicted_value = self.get(p)
+                        
+                        # Archive to cold storage before deleting
+                        if self.eviction_policy == "lru-archive":
+                            self._archive_to_cold(p, evicted_value)
+                        
+                        # Fire on_evict callback
+                        if self.on_evict:
+                            try:
+                                self.on_evict(p, evicted_value)
+                            except Exception:
+                                pass  # Don't let callback errors break eviction
+                        
                         self.delete(p, prune=True)
                 
                 # Final check - if still too large (or policy is "error")
@@ -247,6 +265,124 @@ class Memory:
             self._trigger_watchers(path, value)
             self._auto_flush()
             return self
+
+    def _archive_to_cold(self, path: str, value: Any) -> None:
+        """Archive a fact to cold storage file before eviction.
+        
+        Saves evicted facts to a .cold.json file alongside the main memory file,
+        preserving them for later recovery.
+        """
+        if not self.cold_storage_path:
+            # Auto-derive from auto_flush_path
+            if self.auto_flush_path:
+                from pathlib import Path
+                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix('.cold.json'))
+            else:
+                return  # No path available, skip archival
+        
+        try:
+            from pathlib import Path
+            cold_path = Path(self.cold_storage_path)
+            
+            # Load existing cold storage
+            if cold_path.exists():
+                try:
+                    cold_data = json.loads(cold_path.read_text(encoding='utf-8'))
+                except (json.JSONDecodeError, Exception):
+                    cold_data = {}
+            else:
+                cold_data = {}
+            
+            # Add evicted fact with metadata
+            cold_data[path] = {
+                "value": value,
+                "evicted_at": time.time(),
+                "source": self.auto_flush_path or "unknown"
+            }
+            
+            # Write back
+            cold_path.parent.mkdir(parents=True, exist_ok=True)
+            cold_path.write_text(json.dumps(cold_data, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass  # Don't let archival errors break eviction
+
+    def recover_from_cold(self, path: str) -> bool:
+        """Recover an archived fact from cold storage back to hot memory.
+        
+        Args:
+            path: The dotted path of the fact to recover.
+            
+        Returns:
+            True if recovered, False if not found in cold storage.
+        """
+        if not self.cold_storage_path:
+            if self.auto_flush_path:
+                from pathlib import Path
+                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix('.cold.json'))
+            else:
+                return False
+        
+        try:
+            from pathlib import Path
+            cold_path = Path(self.cold_storage_path)
+            if not cold_path.exists():
+                return False
+            
+            cold_data = json.loads(cold_path.read_text(encoding='utf-8'))
+            if path not in cold_data:
+                return False
+            
+            entry = cold_data[path]
+            value = entry.get("value") if isinstance(entry, dict) else entry
+            
+            # Restore to hot memory
+            self.set(path, value)
+            
+            # Remove from cold storage
+            del cold_data[path]
+            cold_path.write_text(json.dumps(cold_data, ensure_ascii=False), encoding='utf-8')
+            
+            return True
+        except Exception:
+            return False
+
+    def cold_stats(self) -> dict:
+        """Get statistics about cold storage."""
+        if not self.cold_storage_path:
+            if self.auto_flush_path:
+                from pathlib import Path
+                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix('.cold.json'))
+            else:
+                return {"count": 0, "chars": 0, "path": None}
+        
+        try:
+            from pathlib import Path
+            cold_path = Path(self.cold_storage_path)
+            if not cold_path.exists():
+                return {"count": 0, "chars": 0, "path": str(cold_path)}
+            
+            raw = cold_path.read_text(encoding='utf-8')
+            cold_data = json.loads(raw)
+            
+            paths = list(cold_data.keys())
+            oldest = None
+            if cold_data:
+                timestamps = [
+                    v.get("evicted_at", 0) for v in cold_data.values()
+                    if isinstance(v, dict)
+                ]
+                if timestamps:
+                    oldest = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(min(timestamps)))
+            
+            return {
+                "count": len(paths),
+                "chars": len(raw),
+                "path": str(cold_path),
+                "oldest": oldest,
+                "paths": paths
+            }
+        except Exception:
+            return {"count": 0, "chars": 0, "path": self.cold_storage_path}
 
     def delete(self, path: str, prune: bool = False) -> bool:
         """Delete a value by dotted path. Returns True if found and deleted."""

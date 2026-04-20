@@ -906,7 +906,7 @@ class SmartMemory:
     def __init__(self, path: str = "smart_memory.json", max_chars: int = 5000,
                  max_results: int = 8, extract_confidence: float = 0.6,
                  tiered: bool = False, recency_half_life: float = 3600,
-                 procedural: bool = False):
+                 procedural: bool = False, eviction_policy: str = "lru-archive"):
         self.path = Path(path)
         self.max_chars = max_chars
         self.max_results = max_results
@@ -914,7 +914,8 @@ class SmartMemory:
         self.recency_half_life = recency_half_life
 
         # Core storage
-        self.mem = Memory(max_chars=max_chars, auto_flush_path=str(self.path))
+        self.mem = Memory(max_chars=max_chars, auto_flush_path=str(self.path),
+                          eviction_policy=eviction_policy)
         self.brain = Synapse()
 
         # Tiered storage (optional)
@@ -2529,6 +2530,33 @@ class SmartMemory:
                 return True
             
             return False
+
+    def cold_stats(self) -> dict:
+        """Get statistics about cold (archived) storage.
+        
+        Returns:
+            Dict with cold storage metrics: count, chars, path, oldest, paths
+        """
+        return self.mem.cold_stats()
+
+    def recover_from_cold(self, path: str) -> bool:
+        """Recover an archived fact from cold storage back to hot memory.
+        
+        Args:
+            path: The dotted path of the fact to recover.
+            
+        Returns:
+            True if recovered, False if not found in cold storage.
+        """
+        with self._lock:
+            success = self.mem.recover_from_cold(path)
+            if success:
+                # Re-initialize metadata for recovered fact
+                value = self.mem.get(path)
+                if path not in self._meta and value is not None:
+                    self._init_meta(path, value)
+                self._save_meta()
+            return success
 
     def lifecycle_stats(self) -> dict:
         """Get memory lifecycle statistics.
