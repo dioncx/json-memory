@@ -1,5 +1,76 @@
 # Changelog
 
+## v1.9.0 — Structural Operations & Search
+
+### 🔍 search_value() — Search by value content
+`find()` searches by path pattern. `search_value()` searches by what's *inside* the values.
+
+```python
+mem.search_value("Binance")                    # All facts mentioning Binance
+mem.search_value("Binance", field="both")      # In values AND paths
+mem.search_value("hello", case_sensitive=True)  # Case-sensitive match
+```
+
+Works on strings, numbers, lists — anything JSON-serializable. Also on base `Memory`, not just `SmartMemory`.
+
+### 💾 Persistent Snapshots
+`snapshot()` was in-memory only — lost on restart. Now snapshots survive process crashes.
+
+```python
+mem.save_snapshot("before_migration", "Before DB schema change")
+mem.set("db.schema", "v2")
+mem.load_snapshot("before_migration")  # Restores v1
+
+mem.list_snapshots()
+# [{'name': 'before_migration', 'description': '...', 'timestamp': ...}]
+
+mem.delete_snapshot("before_migration")
+```
+
+Snapshots stored in `.snapshots.json` alongside the main data file. Requires `auto_flush_path`.
+
+### 🔄 move() — Bulk rename/restructure
+Restructure your mental model without re-entering everything.
+
+```python
+mem.move("trading", "crypto.trading")
+# Moves: trading.exchange → crypto.trading.exchange
+#        trading.pair → crypto.trading.pair
+#        etc.
+
+mem.move("old", "new", overwrite=True)  # Force overwrites
+```
+
+Atomic: all paths move or none do. TTLs preserved. Empty parent dicts auto-pruned.
+
+### 📥 merge_from_file() — Import from JSON
+Bootstrap memory from a JSON dump or migrate between systems.
+
+```python
+mem.merge_from_file("backup.json")
+mem.merge_from_file("data.json", prefix="restored")
+mem.merge_from_file("data.json", conflict="skip")  # Don't overwrite existing
+```
+
+Handles both plain JSON and state format (`{"data": ..., "ttls": ...}`).
+
+### 📊 diff_snapshots() — Compare snapshots
+See what changed between two points in time.
+
+```python
+diff = mem.diff_snapshots("before", "after")
+# {'added': ['new.path'], 'removed': ['old.path'],
+#  'changed': {'x': {'old': 1, 'new': 2}}, 'unchanged': 5,
+#  'summary': '3 change(s): 1 added, 1 removed, 1 modified, 5 unchanged'}
+```
+
+Works with both in-memory and persistent snapshots.
+
+### 📈 Stats
+- 294 tests passing (51 new)
+- Zero dependencies added
+- Backward compatible with all v1.x code
+
 ## v1.8.0 — Memory Introspection & Health
 
 ### 🔍 Overwrite Detection

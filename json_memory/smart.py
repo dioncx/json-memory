@@ -1376,6 +1376,20 @@ class SmartMemory:
         """Find facts matching a glob pattern."""
         return self.mem.find(pattern)
 
+    def search_value(self, query: str, case_sensitive: bool = False,
+                     field: str = "value") -> dict:
+        """Search memory by value content (substring match).
+
+        Args:
+            query: Search string.
+            case_sensitive: Case-sensitive matching.
+            field: 'value', 'path', or 'both'.
+
+        Returns:
+            Dict of {path: value} for matching entries.
+        """
+        return self.mem.search_value(query, case_sensitive=case_sensitive, field=field)
+
     def context(self) -> str:
         """Export ALL memory as compact JSON for injection."""
         return self.mem.export()
@@ -1889,6 +1903,81 @@ class SmartMemory:
         """Restore state from snapshot."""
         self.mem.rollback(label)
         self._save_meta()
+
+    def save_snapshot(self, name: str, description: str = "") -> bool:
+        """Save current state as a persistent snapshot to disk.
+
+        Unlike snapshot() which is in-memory only, this survives process restarts.
+
+        Args:
+            name: Snapshot name.
+            description: Optional human-readable description.
+
+        Returns:
+            True if saved.
+        """
+        return self.mem.save_snapshot(name, description)
+
+    def load_snapshot(self, name: str) -> bool:
+        """Load a persistent snapshot from disk and restore it.
+
+        Args:
+            name: Snapshot name to restore.
+
+        Returns:
+            True if loaded and restored.
+        """
+        result = self.mem.load_snapshot(name)
+        if result:
+            self._save_meta()
+        return result
+
+    def list_snapshots(self) -> list[dict]:
+        """List all persistent snapshots on disk."""
+        return self.mem.list_snapshots()
+
+    def delete_snapshot(self, name: str) -> bool:
+        """Delete a persistent snapshot from disk."""
+        return self.mem.delete_snapshot(name)
+
+    def diff_snapshots(self, name_a: str, name_b: str) -> dict:
+        """Compare two snapshots and return the differences."""
+        return self.mem.diff_snapshots(name_a, name_b)
+
+    def move(self, src_prefix: str, dst_prefix: str, overwrite: bool = False) -> dict:
+        """Move/rename all paths under a prefix to a new prefix.
+
+        Args:
+            src_prefix: Source prefix (e.g., "trading").
+            dst_prefix: Destination prefix (e.g., "crypto.trading").
+            overwrite: Overwrite existing destination paths.
+
+        Returns:
+            Dict with 'moved', 'count', 'skipped'.
+        """
+        result = self.mem.move(src_prefix, dst_prefix, overwrite=overwrite)
+        # Transfer metadata for moved paths
+        for m in result.get("moved", []):
+            from_path = m["from"]
+            to_path = m["to"]
+            if from_path in self._meta:
+                self._meta[to_path] = self._meta.pop(from_path)
+        self._save_meta()
+        return result
+
+    def merge_from_file(self, path: str, prefix: str = "",
+                        conflict: str = "overwrite") -> dict:
+        """Merge data from a JSON file into memory.
+
+        Args:
+            path: Path to JSON file.
+            prefix: Optional prefix to merge under.
+            conflict: 'overwrite', 'skip'.
+
+        Returns:
+            Dict with 'imported', 'skipped', 'total'.
+        """
+        return self.mem.merge_from_file(path, prefix=prefix, conflict=conflict)
 
     def merge_from(self, other, conflict_strategy: str = "keep_newer") -> dict:
         """Merge another SmartMemory instance into this one.

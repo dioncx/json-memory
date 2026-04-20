@@ -189,6 +189,49 @@ class Memory:
             self._track_access(p)
         return self.batch_get(matches)
 
+    def search_value(self, query: str, case_sensitive: bool = False,
+                     field: str = "value") -> dict:
+        """Search memory by value content (substring match).
+
+        Args:
+            query: Search string to find in values (or paths, or both).
+            case_sensitive: Whether to use case-sensitive matching.
+            field: Where to search — 'value', 'path', or 'both'.
+
+        Returns:
+            Dict of {path: value} for all matching entries.
+
+        Example:
+            >>> mem.search_value("Binance")
+            {'api.exchange': 'Binance', 'notes': 'Use Binance for spot'}
+        """
+        with self._lock:
+            q = query if case_sensitive else query.lower()
+            matches = {}
+
+            for path in self.paths():
+                value = self.get(path)
+                if value is None:
+                    continue
+
+                val_str = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+                if not case_sensitive:
+                    val_str = val_str.lower()
+
+                path_check = path if case_sensitive else path.lower()
+
+                found = False
+                if field in ("value", "both") and q in val_str:
+                    found = True
+                if field in ("path", "both") and q in path_check:
+                    found = True
+
+                if found:
+                    matches[path] = value
+                    self._track_access(path)
+
+            return matches
+
     def set(self, path: str, value: Any, ttl: Optional[float] = None) -> "Memory":
         """Set a value by dotted path. Creates intermediate dicts as needed."""
         with self._lock:
@@ -713,6 +756,145 @@ class Memory:
         """Alias for merge()."""
         return self.merge(data, prefix)
 
+    def move(self, src_prefix: str, dst_prefix: str, overwrite: bool = False) -> dict:
+        """Move/rename all paths under a prefix to a new prefix.
+
+        Restructures memory by relocating an entire branch of the tree.
+        Atomic: all paths move or none do (rollback on conflict).
+
+        Args:
+            src_prefix: Source path prefix to move (e.g., "trading").
+            dst_prefix: Destination path prefix (e.g., "crypto.trading").
+            overwrite: If True, overwrite existing paths at destination.
+                       If False (default), abort if any destination path exists.
+
+        Returns:
+            Dict with:
+            - 'moved': list of {from: path, to: path} entries
+            - 'count': number of paths moved
+            - 'skipped': list of paths skipped (destination exists, overwrite=False)
+
+        Raises:
+            ValueError: If destination conflict and overwrite=False.
+
+        Example:
+            >>> mem.move("trading", "crypto.trading")
+            {'moved': [{'from': 'trading.exchange', 'to': 'crypto.trading.exchange'}], 'count': 1}
+        """
+        with self._lock:
+            # Normalize prefixes (no trailing dots)
+            src_prefix = src_prefix.rstrip(".")
+            dst_prefix = dst_prefix.rstrip(".")
+
+            # Find all paths under src_prefix
+            src_paths = [p for p in self.paths() if p == src_prefix or p.startswith(src_prefix + ".")]
+            if not src_paths:
+                return {"moved": [], "count": 0, "skipped": []}
+
+            # Calculate destination paths
+            moves = []
+            skipped = []
+            for sp in src_paths:
+                suffix = sp[len(src_prefix):]  # ".exchange" or ""
+                dp = dst_prefix + suffix
+                if self.has(dp) and not overwrite:
+                    skipped.append({"from": sp, "to": dp, "reason": "destination exists"})
+                else:
+                    moves.append({"from": sp, "to": dp})
+
+            if skipped and not overwrite:
+                raise ValueError(
+                    f"Cannot move: {len(skipped)} destination path(s) already exist. "
+                    f"Use overwrite=True to force. Conflicts: {[s['to'] for s in skipped]}"
+                )
+
+            # Snapshot for atomic rollback
+            snapshot_data = copy.deepcopy(self._data)
+            snapshot_ttls = copy.deepcopy(self._ttls)
+
+            try:
+                moved = []
+                for m in moves:
+                    value = self.get(m["from"])
+                    ttl_remaining = None
+                    if m["from"] in self._ttls:
+                        ttl_remaining = max(0, self._ttls[m["from"]] - time.time())
+
+                    self.set(m["to"], value, ttl=ttl_remaining)
+                    self.delete(m["from"], prune=True)
+                    moved.append(m)
+
+                self._invalidate()
+                self._auto_flush()
+
+                return {"moved": moved, "count": len(moved), "skipped": skipped}
+
+            except Exception:
+                # Rollback on any failure
+                self._data = snapshot_data
+                self._ttls = snapshot_ttls
+                self._invalidate()
+                raise
+
+    def merge_from_file(self, path: str, prefix: str = "",
+                        conflict: str = "overwrite") -> dict:
+        """Merge data from a JSON file into memory.
+
+        Args:
+            path: Path to JSON file to merge.
+            prefix: Optional prefix to merge under.
+            conflict: What to do when paths already exist:
+                - 'overwrite': Replace existing values (default)
+                - 'skip': Keep existing, skip imported
+                - 'keep_newer': Not applicable for file import (same as overwrite)
+
+        Returns:
+            Dict with 'imported', 'skipped', 'total' counts.
+
+        Example:
+            >>> mem.merge_from_file("backup.json", prefix="restored")
+            {'imported': 15, 'skipped': 2, 'total': 17}
+        """
+        with self._lock:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.loads(f.read())
+
+            # Handle both plain data and state format {"data": ..., "ttls": ...}
+            if isinstance(raw, dict) and "data" in raw and "ttls" in raw:
+                data = raw["data"]
+            else:
+                data = raw
+
+            if not isinstance(data, dict):
+                raise ValueError(f"Expected a JSON object in {path}, got {type(data).__name__}")
+
+            # Flatten to {path: value}
+            def _flatten(d, pfx=""):
+                result = {}
+                for k, v in d.items():
+                    full = f"{pfx}.{k}" if pfx else k
+                    if isinstance(v, dict):
+                        result.update(_flatten(v, full))
+                    else:
+                        result[full] = v
+                return result
+
+            flat = _flatten(data, prefix)
+            imported = 0
+            skipped = 0
+
+            for p, v in flat.items():
+                if conflict == "skip" and self.has(p):
+                    skipped += 1
+                    continue
+                self.set(p, v)
+                imported += 1
+
+            self._invalidate()
+            self._auto_flush()
+
+            return {"imported": imported, "skipped": skipped, "total": len(flat)}
+
     def _merge_apply(self, data: dict, prefix: str = "") -> int:
         """Apply merge operations without overflow checks (internal)."""
         count = 0
@@ -758,7 +940,7 @@ class Memory:
             return self
 
     def snapshot(self, name: str) -> None:
-        """Create a named checkpoint of the current memory state."""
+        """Create a named checkpoint of the current memory state (in-memory)."""
         with self._lock:
             self._snapshots[name] = self.get_state()
 
@@ -770,6 +952,231 @@ class Memory:
             self.set_state(self._snapshots[name])
             self._auto_flush()
             return True
+
+    def _snapshots_path(self) -> Optional[str]:
+        """Internal: resolve the persistent snapshots file path."""
+        if self.auto_flush_path:
+            from pathlib import Path
+            return str(Path(self.auto_flush_path).with_suffix('.snapshots.json'))
+        return None
+
+    def save_snapshot(self, name: str, description: str = "") -> bool:
+        """Save current state as a named snapshot to disk (persistent).
+
+        Unlike snapshot() which is in-memory only, this survives process restarts.
+
+        Args:
+            name: Snapshot name (alphanumeric + dashes/underscores).
+            description: Optional human-readable description.
+
+        Returns:
+            True if saved successfully.
+        """
+        snap_path = self._snapshots_path()
+        if not snap_path:
+            raise ValueError("No auto_flush_path configured — cannot persist snapshots")
+
+        with self._lock:
+            # Load existing persistent snapshots
+            try:
+                from pathlib import Path
+                p = Path(snap_path)
+                if p.exists():
+                    all_snaps = json.loads(p.read_text(encoding='utf-8'))
+                else:
+                    all_snaps = {}
+            except Exception:
+                all_snaps = {}
+
+            # Save this snapshot
+            all_snaps[name] = {
+                "state": self.get_state(),
+                "timestamp": time.time(),
+                "description": description,
+                "entry_count": len(self.paths()),
+                "chars": len(self.export()),
+            }
+
+            # Write back
+            from pathlib import Path
+            p = Path(snap_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(all_snaps, ensure_ascii=False), encoding='utf-8')
+
+            # Also keep in-memory for instant rollback
+            self._snapshots[name] = self.get_state()
+            return True
+
+    def load_snapshot(self, name: str) -> bool:
+        """Load a persistent snapshot from disk and restore it.
+
+        Args:
+            name: Snapshot name to restore.
+
+        Returns:
+            True if loaded and restored, False if not found.
+        """
+        snap_path = self._snapshots_path()
+        if not snap_path:
+            raise ValueError("No auto_flush_path configured — cannot load snapshots")
+
+        with self._lock:
+            try:
+                from pathlib import Path
+                p = Path(snap_path)
+                if not p.exists():
+                    return False
+                all_snaps = json.loads(p.read_text(encoding='utf-8'))
+                if name not in all_snaps:
+                    return False
+                state = all_snaps[name]["state"]
+                self.set_state(state)
+                self._snapshots[name] = state  # Cache in-memory too
+                return True
+            except Exception:
+                return False
+
+    def list_snapshots(self) -> list[dict]:
+        """List all persistent snapshots on disk.
+
+        Returns:
+            List of dicts with name, timestamp, description, entry_count, chars.
+        """
+        snap_path = self._snapshots_path()
+        if not snap_path:
+            return []
+
+        try:
+            from pathlib import Path
+            p = Path(snap_path)
+            if not p.exists():
+                return []
+            all_snaps = json.loads(p.read_text(encoding='utf-8'))
+            results = []
+            for name, info in all_snaps.items():
+                results.append({
+                    "name": name,
+                    "timestamp": info.get("timestamp"),
+                    "description": info.get("description", ""),
+                    "entry_count": info.get("entry_count", 0),
+                    "chars": info.get("chars", 0),
+                    "age_seconds": time.time() - info.get("timestamp", 0) if info.get("timestamp") else None,
+                })
+            return sorted(results, key=lambda r: r.get("timestamp", 0), reverse=True)
+        except Exception:
+            return []
+
+    def delete_snapshot(self, name: str) -> bool:
+        """Delete a persistent snapshot from disk.
+
+        Args:
+            name: Snapshot name to delete.
+
+        Returns:
+            True if deleted, False if not found.
+        """
+        snap_path = self._snapshots_path()
+        if not snap_path:
+            return False
+
+        with self._lock:
+            try:
+                from pathlib import Path
+                p = Path(snap_path)
+                if not p.exists():
+                    return False
+                all_snaps = json.loads(p.read_text(encoding='utf-8'))
+                if name not in all_snaps:
+                    return False
+                del all_snaps[name]
+                p.write_text(json.dumps(all_snaps, ensure_ascii=False), encoding='utf-8')
+                self._snapshots.pop(name, None)
+                return True
+            except Exception:
+                return False
+
+    def diff_snapshots(self, name_a: str, name_b: str) -> dict:
+        """Compare two snapshots and return the differences.
+
+        Compares in-memory snapshots first, then falls back to persistent storage.
+
+        Args:
+            name_a: First snapshot name (baseline).
+            name_b: Second snapshot name (target).
+
+        Returns:
+            Dict with:
+            - 'added': paths only in B
+            - 'removed': paths only in A
+            - 'changed': paths with different values ({path: {'old': ..., 'new': ...}})
+            - 'unchanged': count of identical paths
+            - 'summary': human-readable description
+        """
+        def _get_snapshot_state(name):
+            # Try in-memory first
+            if name in self._snapshots:
+                return self._snapshots[name]
+            # Fall back to persistent
+            snap_path = self._snapshots_path()
+            if snap_path:
+                try:
+                    from pathlib import Path
+                    p = Path(snap_path)
+                    if p.exists():
+                        all_snaps = json.loads(p.read_text(encoding='utf-8'))
+                        if name in all_snaps:
+                            return all_snaps[name]["state"]
+                except Exception:
+                    pass
+            return None
+
+        state_a = _get_snapshot_state(name_a)
+        state_b = _get_snapshot_state(name_b)
+
+        if state_a is None:
+            raise ValueError(f"Snapshot '{name_a}' not found")
+        if state_b is None:
+            raise ValueError(f"Snapshot '{name_b}' not found")
+
+        # Flatten both states to {path: value}
+        def _flatten(data, prefix=""):
+            result = {}
+            for k, v in data.items():
+                path = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, dict):
+                    result.update(_flatten(v, path))
+                else:
+                    result[path] = v
+            return result
+
+        flat_a = _flatten(state_a.get("data", state_a) if isinstance(state_a, dict) and "data" in state_a else state_a)
+        flat_b = _flatten(state_b.get("data", state_b) if isinstance(state_b, dict) and "data" in state_b else state_b)
+
+        paths_a = set(flat_a.keys())
+        paths_b = set(flat_b.keys())
+
+        added = sorted(paths_b - paths_a)
+        removed = sorted(paths_a - paths_b)
+        common = paths_a & paths_b
+
+        changed = {}
+        unchanged_count = 0
+        for p in sorted(common):
+            if flat_a[p] != flat_b[p]:
+                changed[p] = {"old": flat_a[p], "new": flat_b[p]}
+            else:
+                unchanged_count += 1
+
+        total_changes = len(added) + len(removed) + len(changed)
+        summary = f"{total_changes} change(s): {len(added)} added, {len(removed)} removed, {len(changed)} modified, {unchanged_count} unchanged"
+
+        return {
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+            "unchanged": unchanged_count,
+            "summary": summary,
+        }
 
     def flush(self) -> None:
         """Manually flush current state to disk if an adapter is configured."""
