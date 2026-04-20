@@ -124,6 +124,20 @@ CONCEPT_MAP = {
     "then": ["past", "previous", "before", "ago"],
     "when": ["time", "date", "moment", "period"],
     "time": ["when", "date", "moment", "period", "hour", "day"],
+    
+    # Negation / Warnings
+    "not": ["don't", "doesn't", "didn't", "won't", "can't", "cannot", "never", "without"],
+    "don't": ["not", "doesn't", "didn't", "won't", "can't", "cannot", "never", "avoid"],
+    "avoid": ["not", "don't", "skip", "ignore", "bypass", "warning", "danger"],
+    "warning": ["caution", "danger", "risk", "alert", "notice", "mistake", "error"],
+    "mistake": ["error", "problem", "issue", "fail", "wrong", "bad", "warning"],
+    "error": ["mistake", "problem", "issue", "fail", "wrong", "bad", "warning"],
+    "problem": ["issue", "error", "mistake", "fail", "wrong", "bad", "difficulty"],
+    "danger": ["risk", "warning", "caution", "hazard", "threat", "unsafe"],
+    "risk": ["danger", "warning", "caution", "hazard", "threat", "unsafe"],
+    "fail": ["error", "mistake", "problem", "issue", "wrong", "bad", "unsuccessful"],
+    "wrong": ["incorrect", "mistake", "error", "bad", "fail", "problem"],
+    "bad": ["wrong", "poor", "terrible", "awful", "negative", "harmful"],
 }
 
 

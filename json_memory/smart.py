@@ -146,6 +146,78 @@ def _keyword_relevance(fact_tokens: set[str], query_tokens: set[str],
     return min(score, 1.0)
 
 
+# ── Negation Patterns ─────────────────────────────────────────────────
+
+NEGATION_PATTERNS = [
+    r'\bnot\b',
+    r"\bdon'?t\b",
+    r"\bdoesn'?t\b",
+    r"\bdidn'?t\b",
+    r"\bwon'?t\b",
+    r"\bcan'?t\b",
+    r"\bcannot\b",
+    r"\bnever\b",
+    r"\bavoid\b",
+    r"\bno\b",
+    r"\bnone\b",
+    r"\bnothing\b",
+    r"\bneither\b",
+    r"\bnor\b",
+    r'\bwithout\b',
+    r'\bwarning\b',
+    r'\bmistake[s]?\b',  # Handle plural
+    r'\berror[s]?\b',
+    r'\bproblem[s]?\b',
+    r'\bissue[s]?\b',
+    r'\bfail[s]?\b',
+    r'\bwrong\b',
+    r'\bbad\b',
+    r'\bdanger\b',
+    r'\brisk[s]?\b',
+    r"\bshouldn'?t\b",  # Add shouldn't
+    r"\bwouldn'?t\b",  # Add wouldn't
+    r"\bcouldn'?t\b",  # Add couldn't
+]
+
+def _detect_negation(query: str) -> dict:
+    """Detect negation intent in a query.
+    
+    Returns:
+        Dict with negation info: is_negated, negation_type, negation_keyword
+    """
+    if not query:
+        return {'is_negated': False, 'negation_type': None, 'negation_keyword': None}
+    
+    query_lower = query.lower()
+    
+    # Check for negation patterns
+    import re
+    for pattern in NEGATION_PATTERNS:
+        match = re.search(pattern, query_lower)
+        if match:
+            keyword = match.group(0)
+            
+            # Determine negation type (normalize keyword to handle plurals)
+            keyword_base = keyword.rstrip('s')  # Remove plural 's'
+            
+            if keyword_base in ['not', "don't", "doesn't", "didn't", "won't", "can't", 'cannot', 'never', 'without',
+                               "shouldn't", "wouldn't", "couldn't"]:
+                negation_type = 'exclusion'
+            elif keyword_base in ['avoid', 'warning', 'mistake', 'error', 'problem', 'issue', 'fail', 'wrong', 'bad', 'danger', 'risk']:
+                negation_type = 'warning'
+            elif keyword_base in ['no', 'none', 'nothing', 'neither', 'nor']:
+                negation_type = 'absence'
+            else:
+                negation_type = 'general'
+            
+            return {
+                'is_negated': True,
+                'negation_type': negation_type,
+                'negation_keyword': keyword,
+            }
+    
+    return {'is_negated': False, 'negation_type': None, 'negation_keyword': None}
+
 # ── Temporal Patterns ─────────────────────────────────────────────────
 
 TEMPORAL_PATTERNS = {
@@ -320,6 +392,69 @@ def _temporal_score(meta, temporal_intent: dict, now: float) -> float:
         return 0.5
     
     return 0.5
+
+def _negation_score(meta, negation_info: dict, query_tokens: set[str] = None) -> float:
+    """Calculate negation relevance score.
+    
+    For negated queries (e.g., "What should I NOT do?"), we want to:
+    1. Boost facts tagged as warnings/mistakes
+    2. Find facts about things to avoid
+    
+    Args:
+        meta: PathMeta object with metadata
+        negation_info: Dict from _detect_negation()
+        query_tokens: Token set from query
+        
+    Returns:
+        Negation score (0.0-1.0)
+    """
+    if not negation_info or not negation_info['is_negated']:
+        return 0.5  # Neutral
+    
+    negation_type = negation_info['negation_type']
+    
+    # Check if fact is tagged as warning/mistake
+    tags = meta.tags or []
+    has_warning_tag = any(tag in ['warning', 'mistake', 'error', 'problem', 'issue', 'avoid'] 
+                         for tag in tags)
+    
+    # Check if path suggests warning/mistake
+    path_lower = meta.path.lower() if hasattr(meta, 'path') else ''
+    has_warning_path = any(word in path_lower for word in 
+                          ['warning', 'mistake', 'error', 'problem', 'issue', 'lesson', 'avoid'])
+    
+    # Check if tokens suggest warning/mistake
+    warning_tokens = {'warning', 'mistake', 'error', 'problem', 'issue', 'avoid', 'fail', 'wrong', 'bad', 'danger', 'risk'}
+    has_warning_tokens = bool(meta.tokens & warning_tokens) if meta.tokens else False
+    
+    is_warning = has_warning_tag or has_warning_path or has_warning_tokens
+    
+    if negation_type == 'warning':
+        # Query is asking for warnings/mistakes
+        if is_warning:
+            return 1.0  # Perfect match - boost warning facts
+        else:
+            return 0.3  # Not a warning, but still include with low score
+    
+    elif negation_type == 'exclusion':
+        # Query is asking to exclude something (e.g., "don't use X")
+        # Boost facts that mention the excluded thing
+        if query_tokens and meta.tokens:
+            if query_tokens & meta.tokens:
+                return 0.9  # Mentions excluded thing - high relevance
+        return 0.5  # Doesn't mention excluded thing - neutral
+    
+    elif negation_type == 'absence':
+        # Query is asking about absence (e.g., "what's missing?")
+        # Neutral - can't determine absence from facts
+        return 0.5
+    
+    else:
+        # General negation
+        if is_warning:
+            return 0.8  # Likely relevant
+        else:
+            return 0.3  # Less likely, but still include
 
 # ── Procedural Memory ─────────────────────────────────────────────────
 
@@ -821,14 +956,15 @@ class SmartMemory:
     # ── Smart Retrieval ──────────────────────────────────────────────
 
     def score(self, path: str, query_tokens: set[str] = None, now: float = None,
-              temporal_intent: dict = None) -> float:
-        """Score a path's relevance. Combines recency × frequency × keyword match × temporal.
+              temporal_intent: dict = None, negation_info: dict = None) -> float:
+        """Score a path's relevance. Combines recency × frequency × keyword match × temporal × negation.
 
         Args:
             path: The dotted path to score.
             query_tokens: Token set from user's message (for keyword matching).
             now: Current timestamp (defaults to time.time()).
             temporal_intent: Dict from _detect_temporal_intent() for time-based scoring.
+            negation_info: Dict from _detect_negation() for negation handling.
 
         Returns:
             Float 0.0-1.0 relevance score.
@@ -861,30 +997,44 @@ class SmartMemory:
 
         # Temporal score
         temporal = _temporal_score(meta, temporal_intent, now)
+        
+        # Negation score
+        negation = 0.5  # default (neutral)
+        if negation_info and negation_info['is_negated']:
+            negation = _negation_score(meta, negation_info, query_tokens)
 
         # Weighted combination
         if query_tokens:
             # With a query: keyword dominates, recency/frequency are tiebreakers
             if keyword > 0:
-                # Adjust weights based on temporal intent
-                if temporal_intent and temporal_intent['intent']:
-                    # Strong temporal intent: boost temporal score
-                    return (0.05 * recency + 0.05 * frequency + 0.70 * keyword + 0.20 * temporal)
+                # Adjust weights based on temporal and negation intent
+                temporal_weight = 0.20 if temporal_intent and temporal_intent['intent'] else 0.0
+                negation_weight = 0.20 if negation_info and negation_info['is_negated'] else 0.0
+                keyword_weight = 0.85 - temporal_weight - negation_weight
+                
+                return (0.1 * recency + 0.05 * frequency + 
+                        keyword_weight * keyword + 
+                        temporal_weight * temporal +
+                        negation_weight * negation)
+            else:
+                # No keyword match at all
+                # For negation queries, still consider negation scoring
+                if negation_info and negation_info['is_negated']:
+                    # Boost based on negation relevance
+                    return 0.1 * recency + 0.05 * frequency + 0.85 * negation
                 else:
-                    # No temporal intent: original weights
-                    return 0.1 * recency + 0.05 * frequency + 0.85 * keyword
-            else:
-                # No keyword match at all: suppress completely
-                # Recency/frequency without relevance is noise
-                return 0.0
+                    # No keyword match and no negation: suppress completely
+                    # Recency/frequency without relevance is noise
+                    return 0.0
         else:
-            # Without a query: recency + frequency + temporal
-            if temporal_intent and temporal_intent['intent']:
-                # Strong temporal intent: boost temporal score
-                return 0.3 * recency + 0.2 * frequency + 0.5 * temporal
-            else:
-                # No temporal intent: original weights
-                return 0.6 * recency + 0.4 * frequency
+            # Without a query: recency + frequency + temporal + negation
+            temporal_weight = 0.5 if temporal_intent and temporal_intent['intent'] else 0.0
+            negation_weight = 0.5 if negation_info and negation_info['is_negated'] else 0.0
+            remaining = 1.0 - temporal_weight - negation_weight
+            
+            return (remaining * 0.6 * recency + remaining * 0.4 * frequency + 
+                    temporal_weight * temporal +
+                    negation_weight * negation)
 
     def prompt_context(self, query: str = None, max_results: int = None,
                        format_fn=None) -> str:
@@ -1133,10 +1283,13 @@ class SmartMemory:
         
         # Detect temporal intent in query
         temporal_intent = _detect_temporal_intent(query) if query else {'intent': None, 'range_seconds': None}
+        
+        # Detect negation in query
+        negation_info = _detect_negation(query) if query else {'is_negated': False, 'negation_type': None}
 
         scored = []
         for path in self.mem.paths():
-            s = self.score(path, query_tokens, now, temporal_intent)
+            s = self.score(path, query_tokens, now, temporal_intent, negation_info)
             scored.append((s, path, self._meta.get(path)))
 
         # Smart filtering: when query has strong matches, suppress noise
