@@ -246,7 +246,7 @@ class TestSmartMemoryWithTTL:
             temp_path = f.name
         
         try:
-            memory = SmartMemory(path=temp_path, max_chars=5000)
+            memory = SmartMemory(path=temp_path, max_chars=5000, tiered=True)
             yield memory
         finally:
             if os.path.exists(temp_path):
@@ -296,3 +296,130 @@ class TestSmartMemoryWithTTL:
         # Now prune should remove
         result = mem.prune()
         assert "test.temp" in result['expired']
+
+
+class TestSmartMemoryProtectedFacts:
+    """Test protected facts are immune to pruning."""
+    
+    @pytest.fixture
+    def mem(self):
+        """Create a temporary SmartMemory instance with tiered storage enabled."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump({}, f)
+            temp_path = f.name
+        
+        try:
+            memory = SmartMemory(path=temp_path, max_chars=5000, tiered=True)
+            yield memory
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+    
+    def test_protected_fact_immune_to_age_pruning(self, mem):
+        """Protected facts should not be removed by age-based pruning."""
+        # Add protected fact
+        mem.remember("user.name", "Dion Christian", protected=True)
+        mem._meta["user.name"].created_at = time.time() - 100000  # Very old
+        
+        # Add unprotected fact (also old)
+        mem.remember("test.temp", "temporary")
+        mem._meta["test.temp"].created_at = time.time() - 100000
+        
+        # Prune with age limit
+        result = mem.prune(max_age_seconds=86400)
+        
+        # Protected fact should be skipped
+        assert "user.name" in result['skipped_protected']
+        assert "user.name" not in result['removed']
+        
+        # Unprotected fact should be removed
+        assert "test.temp" in result['removed']
+    
+    def test_protected_fact_immune_to_frequency_pruning(self, mem):
+        """Protected facts should not be removed by frequency-based pruning."""
+        # Add protected fact with low access count
+        mem.remember("user.profession", "Developer", protected=True)
+        
+        # Add unprotected fact with low access count
+        mem.remember("test.rare", "rarely accessed")
+        
+        # Prune with minimum access count
+        result = mem.prune(min_access_count=5)
+        
+        # Protected fact should be skipped
+        assert "user.profession" in result['skipped_protected']
+        assert "user.profession" not in result['removed']
+        
+        # Unprotected fact should be removed
+        assert "test.rare" in result['removed']
+    
+    def test_protected_fact_immune_to_size_pruning(self, mem):
+        """Protected facts should not be removed by size-based pruning."""
+        # Add large protected fact
+        mem.remember("user.skills", "Python, Go, Trading Bots, Machine Learning, " * 10, 
+                    protected=True)
+        
+        # Add small unprotected facts
+        for i in range(5):
+            mem.remember(f"test.fact{i}", f"value{i}")
+        
+        # Prune to small size limit
+        result = mem.prune(max_total_chars=200)
+        
+        # Protected fact should remain
+        assert mem.recall("user.skills") is not None
+        
+        # Unprotected facts should be removed
+        assert result['total_removed'] > 0
+    
+    def test_protected_fact_immune_to_archiving(self, mem):
+        """Protected facts should not be archived."""
+        # Add protected fact
+        mem.remember("user.name", "Dion Christian", protected=True)
+        mem._meta["user.name"].last_accessed = time.time() - 1000000  # Very old
+        
+        # Add unprotected fact
+        mem.remember("test.temp", "temporary")
+        mem._meta["test.temp"].last_accessed = time.time() - 1000000
+        
+        # Prune (which includes archiving)
+        result = mem.prune()
+        
+        # Protected fact should not be archived
+        assert "user.name" not in result['archived']
+    
+    def test_remember_with_protected_flag(self, mem):
+        """Remember with protected=True should set protected flag."""
+        mem.remember("user.name", "Dion", protected=True)
+        
+        meta = mem._meta["user.name"]
+        assert meta.protected is True
+    
+    def test_remember_with_tags(self, mem):
+        """Remember with tags should store tags."""
+        mem.remember("user.name", "Dion", tags=["identity", "critical"])
+        
+        meta = mem._meta["user.name"]
+        assert meta.tags == ["identity", "critical"]
+    
+    def test_protected_persistence(self, mem):
+        """Protected flag should persist across save/load."""
+        mem.remember("user.name", "Dion", protected=True)
+        
+        # Save and reload
+        mem._save_meta()
+        mem._load_meta()
+        
+        # Should still be protected
+        assert mem._meta["user.name"].protected is True
+    
+    def test_tags_persistence(self, mem):
+        """Tags should persist across save/load."""
+        mem.remember("user.name", "Dion", tags=["identity", "critical"])
+        
+        # Save and reload
+        mem._save_meta()
+        mem._load_meta()
+        
+        # Should have same tags
+        assert mem._meta["user.name"].tags == ["identity", "critical"]

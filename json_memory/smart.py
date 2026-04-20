@@ -151,9 +151,9 @@ def _keyword_relevance(fact_tokens: set[str], query_tokens: set[str],
 class PathMeta:
     """Tracks per-path metadata for scoring and lifecycle management."""
     __slots__ = ['last_accessed', 'access_count', 'created_at', 'tier', 'tokens', 
-                 'ttl', 'expires_at', 'archived', 'size_bytes']
+                 'ttl', 'expires_at', 'archived', 'size_bytes', 'protected', 'tags']
 
-    def __init__(self, ttl: int = None):
+    def __init__(self, ttl: int = None, protected: bool = False, tags: list[str] = None):
         now = time.time()
         self.last_accessed = now
         self.access_count = 1
@@ -164,6 +164,8 @@ class PathMeta:
         self.expires_at = (now + ttl) if ttl else None
         self.archived = False
         self.size_bytes = 0
+        self.protected = protected  # Protected facts are immune to pruning
+        self.tags = tags or []
 
 
 class TieredMemory:
@@ -339,7 +341,8 @@ class SmartMemory:
 
     # ── Core Operations ──────────────────────────────────────────────
 
-    def remember(self, path: str, value, ttl: int = None, tags: list[str] = None):
+    def remember(self, path: str, value, ttl: int = None, tags: list[str] = None, 
+                 protected: bool = False):
         """Store a fact. Use dotted paths: 'user.name', 'project.status'
 
         Args:
@@ -347,10 +350,11 @@ class SmartMemory:
             value: Any JSON-serializable value.
             ttl: Optional time-to-live in seconds.
             tags: Optional list of tags for categorization.
+            protected: If True, fact is immune to pruning (for critical identity facts).
         """
         with self._lock:
             self.mem.set(path, value, ttl=ttl)
-            self._init_meta(path, value, ttl=ttl)
+            self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags)
 
             if self.tiered:
                 self.tiered.set(path, value, tier='hot', ttl=ttl)
@@ -882,14 +886,19 @@ class SmartMemory:
             
         Returns:
             Dict with pruning statistics and removed paths
+            
+        Note:
+            Protected facts (protected=True) are immune to all pruning except TTL expiration.
+            Identity facts (user.name, user.profession, etc.) should be marked protected.
         """
         with self._lock:
             now = time.time()
             removed = []
             expired = []
             archived = []
+            skipped_protected = []
             
-            # 1. Remove expired facts (TTL exceeded)
+            # 1. Remove expired facts (TTL exceeded) — even protected facts can expire
             for path in list(self._meta.keys()):
                 meta = self._meta[path]
                 if meta.expires_at and now > meta.expires_at:
@@ -902,12 +911,18 @@ class SmartMemory:
                         del self._meta[path]
                     expired.append(path)
             
-            # 2. Remove old facts (age-based pruning)
+            # 2. Remove old facts (age-based pruning) — skip protected
             if max_age_seconds:
                 for path in list(self._meta.keys()):
                     if path in expired:  # Skip already expired
                         continue
                     meta = self._meta[path]
+                    
+                    # Skip protected facts
+                    if meta.protected:
+                        skipped_protected.append(path)
+                        continue
+                    
                     age = now - meta.created_at
                     if age > max_age_seconds:
                         if not dry_run:
@@ -919,12 +934,19 @@ class SmartMemory:
                             del self._meta[path]
                         removed.append(path)
             
-            # 3. Remove rarely accessed facts (frequency-based pruning)
+            # 3. Remove rarely accessed facts (frequency-based pruning) — skip protected
             if min_access_count:
                 for path in list(self._meta.keys()):
                     if path in expired or path in removed:  # Skip already processed
                         continue
                     meta = self._meta[path]
+                    
+                    # Skip protected facts
+                    if meta.protected:
+                        if path not in skipped_protected:
+                            skipped_protected.append(path)
+                        continue
+                    
                     if meta.access_count < min_access_count:
                         if not dry_run:
                             self.mem.delete(path, prune=True)
@@ -935,7 +957,7 @@ class SmartMemory:
                             del self._meta[path]
                         removed.append(path)
             
-            # 4. Size-based pruning (if total exceeds limit)
+            # 4. Size-based pruning (if total exceeds limit) — skip protected
             if max_total_chars:
                 total_chars = 0
                 for path in self.mem.paths():
@@ -944,9 +966,9 @@ class SmartMemory:
                         total_chars += len(str(value))
                 
                 if total_chars > max_total_chars:
-                    # Sort by score (oldest, least accessed first)
+                    # Sort by score (oldest, least accessed first), but exclude protected
                     paths_by_score = sorted(
-                        self._meta.items(),
+                        [(p, m) for p, m in self._meta.items() if not m.protected],
                         key=lambda x: (x[1].access_count, x[1].last_accessed)
                     )
                     
@@ -972,12 +994,17 @@ class SmartMemory:
                             removed.append(path)
                             chars_removed += value_chars
             
-            # 5. Archive old facts to cold storage (if tiered enabled)
+            # 5. Archive old facts to cold storage (if tiered enabled) — skip protected
             if self.tiered:
                 for path in list(self._meta.keys()):
                     if path in expired or path in removed:
                         continue
                     meta = self._meta[path]
+                    
+                    # Skip protected facts
+                    if meta.protected:
+                        continue
+                    
                     age = now - meta.last_accessed
                     
                     # Archive if not accessed in 7 days
@@ -1001,8 +1028,10 @@ class SmartMemory:
                 'removed': removed,
                 'expired': expired,
                 'archived': archived,
+                'skipped_protected': skipped_protected,
                 'total_removed': len(removed) + len(expired),
                 'total_archived': len(archived),
+                'total_protected': len(skipped_protected),
                 'dry_run': dry_run,
             }
 
@@ -1097,10 +1126,11 @@ class SmartMemory:
 
     # ── Internal ─────────────────────────────────────────────────────
 
-    def _init_meta(self, path: str, value, ttl: int = None):
+    def _init_meta(self, path: str, value, ttl: int = None, protected: bool = False, 
+                   tags: list[str] = None):
         """Initialize or update metadata for a path."""
         if path not in self._meta:
-            self._meta[path] = PathMeta(ttl=ttl)
+            self._meta[path] = PathMeta(ttl=ttl, protected=protected, tags=tags)
         meta = self._meta[path]
         meta.last_accessed = time.time()
         meta.tokens = self._extract_tokens(path, value)
@@ -1165,6 +1195,8 @@ class SmartMemory:
                     meta.expires_at = data.get('expires_at', None)
                     meta.archived = data.get('archived', False)
                     meta.size_bytes = data.get('size_bytes', 0)
+                    meta.protected = data.get('protected', False)
+                    meta.tags = data.get('tags', [])
                     self._meta[path] = meta
             except Exception:
                 pass
@@ -1184,6 +1216,8 @@ class SmartMemory:
                     'expires_at': meta.expires_at,
                     'archived': meta.archived,
                     'size_bytes': meta.size_bytes,
+                    'protected': meta.protected,
+                    'tags': meta.tags,
                 }
             self._meta_path.parent.mkdir(parents=True, exist_ok=True)
             self._meta_path.write_text(json.dumps(raw, ensure_ascii=False), encoding='utf-8')
