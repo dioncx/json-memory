@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.6.0 — Memory Pruning & Lifecycle Management
+
+### Added
+- **Memory pruning system** — prevents unbounded growth in long-running agents:
+  - `prune()` method with multiple pruning strategies:
+    - TTL-based expiration (time-to-live per fact)
+    - Age-based pruning (remove facts older than X seconds)
+    - Frequency-based pruning (remove rarely accessed facts)
+    - Size-based pruning (enforce total memory size limit)
+    - Dry run mode for safe testing
+  - `archive()` method for manual archival to cold storage
+  - `lifecycle_stats()` method for memory health monitoring:
+    - Total facts, size, and average age
+    - Expired and archived fact counts
+    - Tier distribution (hot/warm/cold)
+    - Health assessment (healthy/warning/critical)
+
+- **Enhanced PathMeta** for lifecycle tracking:
+  - TTL (time-to-live) support per fact
+  - Expiration timestamp tracking
+  - Archive status flag
+  - Size tracking in bytes
+
+- **20 new tests** for pruning functionality (all passing)
+
+### Fixed
+- **TieredMemory deletion** — now properly deletes from all three tiers (hot/warm/cold)
+- **Size calculation** — uses paths() instead of non-existent values() method
+
+### Performance
+- **Total tests**: 164 passing (was 144)
+- **Prevents memory bloat** in production agents running 24/7
+- **Configurable retention policies** for different use cases
+
+
 ## v0.5.0 — Enhanced Concept Map & Path Token Fix
 
 ### Added
