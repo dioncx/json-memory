@@ -1,0 +1,23 @@
+{
+  "data": {
+    "user": {
+      "name": "Bob",
+      "timezone": "UTC+8",
+      "preferences": "Python",
+      "notes": "the API key is sk-xyz789"
+    },
+    "project": {
+      "name": "Trading Bot",
+      "status": "active"
+    },
+    "session": {
+      "last_query": "What's the market price?"
+    },
+    "cache": {
+      "price_btc": "$45,000"
+    }
+  },
+  "ttls": {
+    "cache.price_btc": 1776658937.4412131
+  }
+}

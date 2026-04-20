@@ -1,0 +1,29 @@
+{
+  "data": {
+    "user": {
+      "status": "inactive",
+      "state": "inactive",
+      "skills": "Python, Go, JavaScript",
+      "programming_languages": "Python, Go, JavaScript, Rust",
+      "known_languages": "Python, TypeScript, Go",
+      "consolidated": "inactive",
+      "name": "Alice"
+    },
+    "bot": {
+      "running": "yes"
+    },
+    "server": {
+      "power": "on"
+    },
+    "meeting": {
+      "time": "3pm"
+    },
+    "project": {
+      "deadline": "next week"
+    },
+    "temp": {
+      "cache": "some data"
+    }
+  },
+  "ttls": {}
+}

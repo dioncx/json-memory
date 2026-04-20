@@ -9,7 +9,7 @@
       "programming_languages": "Python, Go, JavaScript",
       "known_languages": "Python, TypeScript",
       "state": "inactive",
-      "consolidated": "active, inactive"
+      "consolidated": "go, javascript, python, rust"
     },
     "bot": {
       "running": "no",

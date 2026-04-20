@@ -116,6 +116,57 @@ brain.activate("trading", depth=2)
 
 Like how thinking of "coffee" activates "morning", "energy". Weighted, learnable, decays over time.
 
+### Layer 4: Advanced Features (v1.1.0+)
+
+#### Contradiction Detection
+```python
+mem = SmartMemory("agent.json")
+
+# Store a fact
+mem.remember("user.status", "active")
+
+# Try to store contradictory fact
+result = mem.remember("user.status", "inactive", check_contradictions=True)
+# No contradiction detected (same path is an update)
+
+# Get all contradictions in memory
+contradictions = mem.get_contradictions()
+```
+
+#### Memory Consolidation
+```python
+# Store similar facts
+mem.remember("user.skills", "Python, Go, JavaScript")
+mem.remember("user.programming_languages", "Python, Go, JavaScript, Rust")
+
+# Get consolidation suggestions
+groups = mem.consolidate_memory()
+for group in groups:
+    print(f"Consolidate: {group.paths} → {group.suggested_path}")
+
+# Auto-consolidate high-confidence groups
+result = mem.auto_consolidate(min_confidence=0.7)
+```
+
+#### Forgetting Curve & Reinforcement
+```python
+# Analyze memory strength
+strength = mem.get_memory_strength("user.name", memory_type='identity')
+print(f"Current strength: {strength.current_strength:.3f}")
+print(f"Predicted forget time: {strength.predicted_forget_time}")
+
+# Get memories needing reinforcement
+memories = mem.get_memories_needing_reinforcement(max_items=5)
+for memory in memories:
+    print(f"{memory['path']}: priority={memory['reinforcement_priority']:.3f}")
+
+# Reinforce a memory
+result = mem.reinforce_memory("user.name", boost_strength=0.3)
+
+# Simulate memory decay
+simulation = mem.simulate_memory_decay("project.deadline", days=30)
+```
+
 ---
 
 ## Benchmarks
@@ -188,6 +239,7 @@ No lock-in. Just Python.
 | `examples/basic_usage.py` | Memory + Synapse basics |
 | `examples/agent_memory.py` | Drop-in AgentMemory class |
 | `examples/smart_memory_demo.py` | SmartMemory full demo with benchmarks |
+| `examples/advanced_features_demo.py` | v1.1.0 features: contradiction detection, consolidation, forgetting curve |
 
 ---
 
@@ -207,6 +259,15 @@ mem.associate("debug")                      # concept activation
 mem.snapshot("before_change")               # save state
 mem.rollback("before_change")               # restore state
 mem.explain_score("user.name", "Who am I?") # debug scoring
+
+# v1.1.0+ Advanced features
+mem.get_contradictions()                    # find conflicting facts
+mem.consolidate_memory()                    # find related facts
+mem.auto_consolidate()                      # merge related facts
+mem.get_memory_strength("user.name")        # analyze memory strength
+mem.get_memories_needing_reinforcement()    # prioritize reinforcement
+mem.reinforce_memory("user.name")           # strengthen against forgetting
+mem.simulate_memory_decay("project.deadline", days=30)  # predict decay
 ```
 
 **Memory** (low-level storage):
