@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.5.0 — Cold Storage Completeness
+
+### 🔧 Gap Fixes
+All 5 gaps in cold storage have been addressed:
+
+- ✓ **archive() works without tiered** — `SmartMemory.archive()` now falls back to `.cold.json` when `tiered=False` (was silently returning `False`)
+- ✓ **cold_search()** — Search archived facts by content, path pattern, or age
+- ✓ **recover_all()** / **recover_matching()** — Bulk recovery from cold storage
+- ✓ **purge_cold()** — Permanently delete old archived facts by age or keep-last-N
+- ✓ **lifecycle_stats() includes cold** — Cold storage metrics now in health reports
+
+### New Methods
+
+```python
+# Search cold storage
+results = sm.cold_search(query="trading", path_pattern="project.*")
+
+# Bulk recovery
+sm.recover_all()                    # Recover everything
+sm.recover_matching("project.*")    # Recover by pattern
+
+# Purge old archives
+sm.purge_cold(keep_last=100)        # Keep only 100 most recent
+sm.purge_cold(older_than=time.time() - 86400*30)  # Delete >30 days old
+
+# Cold storage is now in lifecycle stats
+stats = sm.lifecycle_stats()
+print(stats['cold_storage'])  # {'count': 5, 'oldest': '...', ...}
+```
+
+### Internal
+- Refactored `_archive_to_cold` and `recover_from_cold` to use shared `_load_cold` / `_save_cold` helpers
+- `cold_stats()` now also reports `newest` timestamp
+
+---
+
 ## v1.4.0 — Cold Storage & Auto-Archival
 
 ### 🧊 New Eviction Policy: `lru-archive`

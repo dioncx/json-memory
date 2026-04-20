@@ -272,39 +272,19 @@ class Memory:
         Saves evicted facts to a .cold.json file alongside the main memory file,
         preserving them for later recovery.
         """
-        if not self.cold_storage_path:
-            # Auto-derive from auto_flush_path
-            if self.auto_flush_path:
-                from pathlib import Path
-                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix('.cold.json'))
-            else:
-                return  # No path available, skip archival
+        cold_data = self._load_cold()
+        if not cold_data and not self.cold_storage_path:
+            # No path available, skip archival
+            if not self.auto_flush_path:
+                return
         
-        try:
-            from pathlib import Path
-            cold_path = Path(self.cold_storage_path)
-            
-            # Load existing cold storage
-            if cold_path.exists():
-                try:
-                    cold_data = json.loads(cold_path.read_text(encoding='utf-8'))
-                except (json.JSONDecodeError, Exception):
-                    cold_data = {}
-            else:
-                cold_data = {}
-            
-            # Add evicted fact with metadata
-            cold_data[path] = {
-                "value": value,
-                "evicted_at": time.time(),
-                "source": self.auto_flush_path or "unknown"
-            }
-            
-            # Write back
-            cold_path.parent.mkdir(parents=True, exist_ok=True)
-            cold_path.write_text(json.dumps(cold_data, ensure_ascii=False), encoding='utf-8')
-        except Exception:
-            pass  # Don't let archival errors break eviction
+        cold_data[path] = {
+            "value": value,
+            "evicted_at": time.time(),
+            "source": self.auto_flush_path or "unknown"
+        }
+        
+        self._save_cold(cold_data)
 
     def recover_from_cold(self, path: str) -> bool:
         """Recover an archived fact from cold storage back to hot memory.
@@ -315,36 +295,21 @@ class Memory:
         Returns:
             True if recovered, False if not found in cold storage.
         """
-        if not self.cold_storage_path:
-            if self.auto_flush_path:
-                from pathlib import Path
-                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix('.cold.json'))
-            else:
-                return False
-        
-        try:
-            from pathlib import Path
-            cold_path = Path(self.cold_storage_path)
-            if not cold_path.exists():
-                return False
-            
-            cold_data = json.loads(cold_path.read_text(encoding='utf-8'))
-            if path not in cold_data:
-                return False
-            
-            entry = cold_data[path]
-            value = entry.get("value") if isinstance(entry, dict) else entry
-            
-            # Restore to hot memory
-            self.set(path, value)
-            
-            # Remove from cold storage
-            del cold_data[path]
-            cold_path.write_text(json.dumps(cold_data, ensure_ascii=False), encoding='utf-8')
-            
-            return True
-        except Exception:
+        cold_data = self._load_cold()
+        if path not in cold_data:
             return False
+        
+        entry = cold_data[path]
+        value = entry.get("value") if isinstance(entry, dict) else entry
+        
+        # Restore to hot memory
+        self.set(path, value)
+        
+        # Remove from cold storage
+        del cold_data[path]
+        self._save_cold(cold_data)
+        
+        return True
 
     def cold_stats(self) -> dict:
         """Get statistics about cold storage."""
@@ -366,6 +331,7 @@ class Memory:
             
             paths = list(cold_data.keys())
             oldest = None
+            newest = None
             if cold_data:
                 timestamps = [
                     v.get("evicted_at", 0) for v in cold_data.values()
@@ -373,16 +339,197 @@ class Memory:
                 ]
                 if timestamps:
                     oldest = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(min(timestamps)))
+                    newest = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(max(timestamps)))
             
             return {
                 "count": len(paths),
                 "chars": len(raw),
                 "path": str(cold_path),
                 "oldest": oldest,
+                "newest": newest,
                 "paths": paths
             }
         except Exception:
             return {"count": 0, "chars": 0, "path": self.cold_storage_path}
+
+    def cold_search(self, query: str = None, path_pattern: str = None,
+                    older_than: float = None, newer_than: float = None) -> list[dict]:
+        """Search cold storage for archived facts.
+        
+        Args:
+            query: Search in values (substring match, case-insensitive).
+            path_pattern: Glob pattern for paths (e.g., "project.*").
+            older_than: Only facts evicted before this timestamp.
+            newer_than: Only facts evicted after this timestamp.
+            
+        Returns:
+            List of matching entries with path, value, evicted_at.
+        """
+        cold_data = self._load_cold()
+        if not cold_data:
+            return []
+        
+        import fnmatch
+        results = []
+        
+        for path, entry in cold_data.items():
+            if isinstance(entry, dict):
+                value = entry.get("value")
+                evicted_at = entry.get("evicted_at", 0)
+            else:
+                value = entry
+                evicted_at = 0
+            
+            # Filter by path pattern
+            if path_pattern and not fnmatch.fnmatch(path, path_pattern):
+                continue
+            
+            # Filter by age
+            if older_than and evicted_at >= older_than:
+                continue
+            if newer_than and evicted_at <= newer_than:
+                continue
+            
+            # Filter by value content
+            if query:
+                val_str = json.dumps(value, ensure_ascii=False).lower() if not isinstance(value, str) else value.lower()
+                if query.lower() not in val_str:
+                    continue
+            
+            results.append({
+                "path": path,
+                "value": value,
+                "evicted_at": evicted_at,
+                "evicted_ago": time.time() - evicted_at if evicted_at else None
+            })
+        
+        return sorted(results, key=lambda r: r.get("evicted_at", 0))
+
+    def recover_all(self) -> dict:
+        """Recover all facts from cold storage back to hot memory.
+        
+        Returns:
+            Dict with 'recovered' (list of paths), 'failed' (list of paths), 'count'.
+        """
+        cold_data = self._load_cold()
+        if not cold_data:
+            return {"recovered": [], "failed": [], "count": 0}
+        
+        result = {"recovered": [], "failed": [], "count": 0}
+        paths = list(cold_data.keys())
+        
+        for path in paths:
+            if self.recover_from_cold(path):
+                result["recovered"].append(path)
+            else:
+                result["failed"].append(path)
+        
+        result["count"] = len(result["recovered"])
+        return result
+
+    def recover_matching(self, pattern: str) -> dict:
+        """Recover facts from cold storage matching a glob pattern.
+        
+        Args:
+            pattern: Glob pattern (e.g., "project.*", "user.**").
+            
+        Returns:
+            Dict with 'recovered', 'failed', 'count'.
+        """
+        import fnmatch
+        cold_data = self._load_cold()
+        if not cold_data:
+            return {"recovered": [], "failed": [], "count": 0}
+        
+        result = {"recovered": [], "failed": [], "count": 0}
+        
+        for path in cold_data:
+            if fnmatch.fnmatch(path, pattern):
+                if self.recover_from_cold(path):
+                    result["recovered"].append(path)
+                else:
+                    result["failed"].append(path)
+        
+        result["count"] = len(result["recovered"])
+        return result
+
+    def purge_cold(self, older_than: float = None, keep_last: int = None) -> dict:
+        """Permanently delete old facts from cold storage.
+        
+        Args:
+            older_than: Delete facts evicted before this timestamp (epoch).
+                        Use with time.time() - seconds for relative age.
+            keep_last: Keep the N most recently evicted facts, delete the rest.
+            
+        Returns:
+            Dict with 'purged' (list of paths), 'kept' (int), 'count'.
+        """
+        cold_data = self._load_cold()
+        if not cold_data:
+            return {"purged": [], "kept": 0, "count": 0}
+        
+        paths_by_age = sorted(
+            cold_data.items(),
+            key=lambda item: item[1].get("evicted_at", 0) if isinstance(item[1], dict) else 0
+        )
+        
+        to_purge = []
+        to_keep = []
+        
+        if keep_last is not None:
+            # Keep the N most recent, purge the rest
+            for i, (path, entry) in enumerate(paths_by_age):
+                if i < len(paths_by_age) - keep_last:
+                    to_purge.append(path)
+                else:
+                    to_keep.append(path)
+        elif older_than is not None:
+            for path, entry in paths_by_age:
+                evicted_at = entry.get("evicted_at", 0) if isinstance(entry, dict) else 0
+                if evicted_at < older_than:
+                    to_purge.append(path)
+                else:
+                    to_keep.append(path)
+        else:
+            return {"purged": [], "kept": len(paths_by_age), "count": 0,
+                    "error": "Specify older_than or keep_last"}
+        
+        # Write back only kept entries
+        if to_purge:
+            cold_data = {p: cold_data[p] for p in to_keep}
+            self._save_cold(cold_data)
+        
+        return {"purged": to_purge, "kept": len(to_keep), "count": len(to_purge)}
+
+    def _load_cold(self) -> dict:
+        """Load cold storage data from disk."""
+        if not self.cold_storage_path:
+            if self.auto_flush_path:
+                from pathlib import Path
+                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix('.cold.json'))
+            else:
+                return {}
+        
+        try:
+            from pathlib import Path
+            cold_path = Path(self.cold_storage_path)
+            if not cold_path.exists():
+                return {}
+            return json.loads(cold_path.read_text(encoding='utf-8'))
+        except Exception:
+            return {}
+
+    def _save_cold(self, data: dict) -> None:
+        """Save cold storage data to disk."""
+        if not self.cold_storage_path:
+            return
+        try:
+            from pathlib import Path
+            cold_path = Path(self.cold_storage_path)
+            cold_path.parent.mkdir(parents=True, exist_ok=True)
+            cold_path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
 
     def delete(self, path: str, prune: bool = False) -> bool:
         """Delete a value by dotted path. Returns True if found and deleted."""

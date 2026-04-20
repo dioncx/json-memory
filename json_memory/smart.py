@@ -2529,7 +2529,13 @@ class SmartMemory:
                 self._save_meta()
                 return True
             
-            return False
+            # Fallback: use Memory-level cold storage (.cold.json)
+            self.mem._archive_to_cold(path, value)
+            self.mem.delete(path, prune=True)
+            meta.tier = 'cold'
+            meta.archived = True
+            self._save_meta()
+            return True
 
     def cold_stats(self) -> dict:
         """Get statistics about cold (archived) storage.
@@ -2558,6 +2564,70 @@ class SmartMemory:
                 self._save_meta()
             return success
 
+    def cold_search(self, query: str = None, path_pattern: str = None,
+                    older_than: float = None, newer_than: float = None) -> list[dict]:
+        """Search cold storage for archived facts.
+        
+        Args:
+            query: Search in values (substring match, case-insensitive).
+            path_pattern: Glob pattern for paths (e.g., "project.*").
+            older_than: Only facts evicted before this timestamp.
+            newer_than: Only facts evicted after this timestamp.
+            
+        Returns:
+            List of matching entries with path, value, evicted_at.
+        """
+        return self.mem.cold_search(query=query, path_pattern=path_pattern,
+                                    older_than=older_than, newer_than=newer_than)
+
+    def recover_all(self) -> dict:
+        """Recover all facts from cold storage back to hot memory.
+        
+        Returns:
+            Dict with 'recovered' (list of paths), 'failed' (list of paths), 'count'.
+        """
+        with self._lock:
+            result = self.mem.recover_all()
+            # Re-initialize metadata for recovered facts
+            for path in result["recovered"]:
+                value = self.mem.get(path)
+                if path not in self._meta and value is not None:
+                    self._init_meta(path, value)
+            if result["recovered"]:
+                self._save_meta()
+            return result
+
+    def recover_matching(self, pattern: str) -> dict:
+        """Recover facts from cold storage matching a glob pattern.
+        
+        Args:
+            pattern: Glob pattern (e.g., "project.*", "user.**").
+            
+        Returns:
+            Dict with 'recovered', 'failed', 'count'.
+        """
+        with self._lock:
+            result = self.mem.recover_matching(pattern)
+            for path in result["recovered"]:
+                value = self.mem.get(path)
+                if path not in self._meta and value is not None:
+                    self._init_meta(path, value)
+            if result["recovered"]:
+                self._save_meta()
+            return result
+
+    def purge_cold(self, older_than: float = None, keep_last: int = None) -> dict:
+        """Permanently delete old facts from cold storage.
+        
+        Args:
+            older_than: Delete facts evicted before this timestamp (epoch).
+            keep_last: Keep the N most recently evicted facts, delete the rest.
+            
+        Returns:
+            Dict with 'purged' (list of paths), 'kept' (int), 'count'.
+        """
+        return self.mem.purge_cold(older_than=older_than, keep_last=keep_last)
+
     def lifecycle_stats(self) -> dict:
         """Get memory lifecycle statistics.
         
@@ -2578,6 +2648,7 @@ class SmartMemory:
                     'warm_facts': 0,
                     'cold_facts': 0,
                     'memory_health': 'empty',
+                    'cold_storage': self.cold_stats(),
                 }
             
             total_facts = len(self._meta)
@@ -2613,6 +2684,7 @@ class SmartMemory:
                 'warm_facts': tier_counts['warm'],
                 'cold_facts': tier_counts['cold'],
                 'memory_health': health,
+                'cold_storage': self.cold_stats(),
             }
 
     # ── Internal ─────────────────────────────────────────────────────
