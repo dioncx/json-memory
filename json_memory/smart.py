@@ -146,6 +146,250 @@ def _keyword_relevance(fact_tokens: set[str], query_tokens: set[str],
     return min(score, 1.0)
 
 
+# ── Procedural Memory ─────────────────────────────────────────────────
+
+class Skill:
+    """Represents a transferable skill or principle extracted from experience."""
+    __slots__ = ['name', 'principle', 'domains', 'strength', 'last_used', 
+                 'created_at', 'examples', 'transfer_count']
+    
+    def __init__(self, name: str, principle: str, domains: list[str] = None):
+        now = time.time()
+        self.name = name  # e.g., "balance", "momentum_stability"
+        self.principle = principle  # Abstract principle: "Forward momentum stabilizes lateral movement"
+        self.domains = domains or []  # Domains where skill applies: ["cycling", "motorcycling", "skiing"]
+        self.strength = 1.0  # Skill strength (0.0-1.0)
+        self.last_used = now  # When skill was last applied
+        self.created_at = now  # When skill was first extracted
+        self.examples = []  # List of specific experiences that contributed
+        self.transfer_count = 0  # How many times skill transferred to new domain
+
+
+class ProceduralMemory:
+    """Manages skills and principles extracted from experiences."""
+    
+    def __init__(self, path: str = None):
+        self.path = Path(path) if path else None
+        self.skills: dict[str, Skill] = {}  # name → Skill
+        self.domain_index: dict[str, set[str]] = {}  # domain → set of skill names
+        self._lock = threading.RLock()
+        
+        if self.path and self.path.exists():
+            self._load()
+    
+    def add_skill(self, name: str, principle: str, domains: list[str] = None,
+                  examples: list[str] = None) -> Skill:
+        """Add a new skill or strengthen existing one."""
+        with self._lock:
+            if name in self.skills:
+                # Strengthen existing skill
+                skill = self.skills[name]
+                skill.strength = min(skill.strength + 0.1, 1.0)
+                if examples:
+                    skill.examples.extend(examples[:3])  # Keep last 3 examples
+                if domains:
+                    for domain in domains:
+                        if domain not in skill.domains:
+                            skill.domains.append(domain)
+            else:
+                # Create new skill
+                skill = Skill(name, principle, domains or [])
+                if examples:
+                    skill.examples = examples[:3]
+                self.skills[name] = skill
+            
+            # Update domain index
+            for domain in skill.domains:
+                if domain not in self.domain_index:
+                    self.domain_index[domain] = set()
+                self.domain_index[domain].add(name)
+            
+            return skill
+    
+    def get_skills_for_domain(self, domain: str) -> list[Skill]:
+        """Get all skills applicable to a domain."""
+        with self._lock:
+            skill_names = self.domain_index.get(domain, set())
+            return [self.skills[name] for name in skill_names if name in self.skills]
+    
+    def find_transferable_skills(self, new_domain: str, 
+                                 context_keywords: set[str] = None) -> list[Skill]:
+        """Find skills that might transfer to a new domain."""
+        with self._lock:
+            transferable = []
+            
+            for skill in self.skills.values():
+                # Direct domain match
+                if new_domain in skill.domains:
+                    transferable.append(skill)
+                    continue
+                
+                # Keyword overlap with principle
+                if context_keywords:
+                    principle_words = set(skill.principle.lower().split())
+                    if context_keywords & principle_words:
+                        transferable.append(skill)
+                        continue
+                
+                # Similar domains (fuzzy matching)
+                for domain in skill.domains:
+                    if self._domains_similar(domain, new_domain):
+                        transferable.append(skill)
+                        break
+            
+            # Sort by strength and transfer count
+            transferable.sort(key=lambda s: (s.strength, s.transfer_count), reverse=True)
+            return transferable
+    
+    def apply_skill(self, skill_name: str, new_domain: str = None) -> bool:
+        """Record that a skill was applied (strengthens it)."""
+        with self._lock:
+            if skill_name not in self.skills:
+                return False
+            
+            skill = self.skills[skill_name]
+            skill.strength = min(skill.strength + 0.05, 1.0)
+            skill.last_used = time.time()
+            skill.transfer_count += 1
+            
+            if new_domain and new_domain not in skill.domains:
+                skill.domains.append(new_domain)
+                if new_domain not in self.domain_index:
+                    self.domain_index[new_domain] = set()
+                self.domain_index[new_domain].add(skill_name)
+            
+            return True
+    
+    def extract_principles(self, experience: str, domain: str = None) -> list[dict]:
+        """Extract principles from an experience (simplified pattern matching)."""
+        # This is a simplified version - in production, use LLM or NLP
+        principles = []
+        
+        # Pattern: "learned that X causes Y"
+        patterns = [
+            (r'learned that (.+?) causes? (.+)', 'causal'),
+            (r'discovered that (.+?) leads? to (.+)', 'causal'),
+            (r'found that (.+?) requires? (.+)', 'requirement'),
+            (r'realized that (.+?) needs? (.+)', 'requirement'),
+            (r'noticed that (.+?) improves? (.+)', 'improvement'),
+            (r'understood that (.+?) stabilizes? (.+)', 'stabilization'),
+        ]
+        
+        import re
+        for pattern, principle_type in patterns:
+            matches = re.findall(pattern, experience.lower())
+            for match in matches:
+                if isinstance(match, tuple) and len(match) == 2:
+                    cause, effect = match
+                    principle = f"{cause.strip()} → {effect.strip()}"
+                    principles.append({
+                        'principle': principle,
+                        'type': principle_type,
+                        'domains': [domain] if domain else []
+                    })
+        
+        return principles
+    
+    def _domains_similar(self, domain1: str, domain2: str) -> bool:
+        """Check if two domains are similar."""
+        # Normalize to lowercase
+        d1 = domain1.lower()
+        d2 = domain2.lower()
+        
+        # Direct substring match
+        if d1 in d2 or d2 in d1:
+            return True
+        
+        # Shared words (split by underscore or space)
+        import re
+        words1 = set(re.split(r'[_\s]+', d1))
+        words2 = set(re.split(r'[_\s]+', d2))
+        
+        if words1 & words2:
+            return True
+        
+        # Check for common prefixes (at least 3 chars)
+        if len(d1) >= 3 and len(d2) >= 3:
+            if d1[:3] == d2[:3]:
+                return True
+        
+        # Check for common suffixes
+        if len(d1) >= 3 and len(d2) >= 3:
+            if d1[-3:] == d2[-3:]:
+                return True
+        
+        return False
+    
+    def competence_map(self) -> dict:
+        """Get overview of all skills and their domains."""
+        with self._lock:
+            return {
+                'total_skills': len(self.skills),
+                'domains': list(self.domain_index.keys()),
+                'strongest': sorted(
+                    [(s.name, s.strength, s.domains) for s in self.skills.values()],
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:5],
+                'most_transferred': sorted(
+                    [(s.name, s.transfer_count, s.domains) for s in self.skills.values()],
+                    key=lambda x: x[1],
+                    reverse=True
+                )[:5],
+            }
+    
+    def _save(self):
+        """Persist skills to disk."""
+        if not self.path:
+            return
+        
+        try:
+            data = {}
+            for name, skill in self.skills.items():
+                data[name] = {
+                    'principle': skill.principle,
+                    'domains': skill.domains,
+                    'strength': skill.strength,
+                    'last_used': skill.last_used,
+                    'created_at': skill.created_at,
+                    'examples': skill.examples,
+                    'transfer_count': skill.transfer_count,
+                }
+            
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
+    
+    def _load(self):
+        """Load skills from disk."""
+        if not self.path or not self.path.exists():
+            return
+        
+        try:
+            data = json.loads(self.path.read_text(encoding='utf-8'))
+            for name, skill_data in data.items():
+                skill = Skill(
+                    name=name,
+                    principle=skill_data['principle'],
+                    domains=skill_data.get('domains', [])
+                )
+                skill.strength = skill_data.get('strength', 1.0)
+                skill.last_used = skill_data.get('last_used', 0)
+                skill.created_at = skill_data.get('created_at', 0)
+                skill.examples = skill_data.get('examples', [])
+                skill.transfer_count = skill_data.get('transfer_count', 0)
+                self.skills[name] = skill
+                
+                # Rebuild domain index
+                for domain in skill.domains:
+                    if domain not in self.domain_index:
+                        self.domain_index[domain] = set()
+                    self.domain_index[domain].add(name)
+        except Exception:
+            pass
+
+
 # ── Path Metadata ─────────────────────────────────────────────────────
 
 class PathMeta:
@@ -302,7 +546,8 @@ class SmartMemory:
 
     def __init__(self, path: str = "smart_memory.json", max_chars: int = 5000,
                  max_results: int = 8, extract_confidence: float = 0.6,
-                 tiered: bool = False, recency_half_life: float = 3600):
+                 tiered: bool = False, recency_half_life: float = 3600,
+                 procedural: bool = False):
         self.path = Path(path)
         self.max_chars = max_chars
         self.max_results = max_results
@@ -315,6 +560,11 @@ class SmartMemory:
 
         # Tiered storage (optional)
         self.tiered = TieredMemory(path, max_hot_chars=max_chars) if tiered else None
+
+        # Procedural memory (optional)
+        self.procedural = ProceduralMemory(
+            path=str(self.path.with_suffix('.skills.json'))
+        ) if procedural else None
 
         # Per-path metadata for scoring
         self._meta: dict[str, PathMeta] = {}
@@ -871,6 +1121,142 @@ class SmartMemory:
             'age_seconds': round(now - meta.last_accessed, 1),
             'tier': meta.tier,
         }
+
+    # ── Procedural Memory Operations ─────────────────────────────────
+
+    def learn(self, experience: str, domain: str = None, extract_principles: bool = True) -> dict:
+        """Extract principles and skills from an experience.
+        
+        Args:
+            experience: Description of what was learned
+            domain: Domain/context of the experience (e.g., "cycling", "programming")
+            extract_principles: Whether to automatically extract principles
+            
+        Returns:
+            Dict with extracted principles and created/strengthened skills
+        """
+        if not self.procedural:
+            return {'error': 'Procedural memory not enabled. Initialize with procedural=True'}
+        
+        with self._lock:
+            result = {
+                'principles_extracted': [],
+                'skills_created': [],
+                'skills_strengthened': [],
+            }
+            
+            # Extract principles from experience
+            if extract_principles:
+                principles = self.procedural.extract_principles(experience, domain)
+                for p in principles:
+                    skill_name = f"principle_{len(self.procedural.skills)}"
+                    skill = self.procedural.add_skill(
+                        name=skill_name,
+                        principle=p['principle'],
+                        domains=p.get('domains', [domain] if domain else []),
+                        examples=[experience[:100]]
+                    )
+                    result['principles_extracted'].append(p['principle'])
+                    result['skills_created'].append(skill_name)
+            
+            # Also store the experience as a fact for reference
+            fact_path = f"mem.experience.{domain or 'general'}.{int(time.time())}"
+            self.remember(fact_path, experience, tags=['experience', 'learning'])
+            
+            # Save procedural memory
+            self.procedural._save()
+            
+            return result
+
+    def transfer(self, new_situation: str, domain: str = None) -> dict:
+        """Find skills that might transfer to a new situation.
+        
+        Args:
+            new_situation: Description of the new situation
+            domain: Domain of the new situation (e.g., "motorcycling")
+            
+        Returns:
+            Dict with transferable skills and how they apply
+        """
+        if not self.procedural:
+            return {'error': 'Procedural memory not enabled. Initialize with procedural=True'}
+        
+        with self._lock:
+            # Extract keywords from situation
+            keywords = set(re.findall(r'\w{3,}', new_situation.lower()))
+            
+            # Find transferable skills
+            skills = self.procedural.find_transferable_skills(
+                new_domain=domain,
+                context_keywords=keywords
+            )
+            
+            result = {
+                'situation': new_situation,
+                'domain': domain,
+                'transferable_skills': [],
+                'total_found': len(skills),
+            }
+            
+            for skill in skills[:5]:  # Top 5 most relevant
+                result['transferable_skills'].append({
+                    'name': skill.name,
+                    'principle': skill.principle,
+                    'strength': round(skill.strength, 2),
+                    'domains': skill.domains,
+                    'transfer_count': skill.transfer_count,
+                    'how_it_applies': self._explain_transfer(skill, new_situation),
+                })
+            
+            return result
+
+    def apply_skill(self, skill_name: str, new_domain: str = None, 
+                    outcome: str = None) -> bool:
+        """Record that a skill was applied (strengthens it).
+        
+        Args:
+            skill_name: Name of the skill to apply
+            new_domain: Domain where skill was applied
+            outcome: Description of how it was applied
+            
+        Returns:
+            True if skill was found and applied
+        """
+        if not self.procedural:
+            return False
+        
+        with self._lock:
+            success = self.procedural.apply_skill(skill_name, new_domain)
+            
+            if success and outcome:
+                # Store the application as an experience
+                fact_path = f"mem.skill_applied.{skill_name}.{int(time.time())}"
+                self.remember(fact_path, {
+                    'skill': skill_name,
+                    'domain': new_domain,
+                    'outcome': outcome,
+                }, tags=['skill_application', 'learning'])
+                
+                # Save procedural memory
+                self.procedural._save()
+            
+            return success
+
+    def competence_map(self) -> dict:
+        """Get overview of all transferable skills and their domains.
+        
+        Returns:
+            Dict with skill statistics and strongest skills
+        """
+        if not self.procedural:
+            return {'error': 'Procedural memory not enabled. Initialize with procedural=True'}
+        
+        return self.procedural.competence_map()
+
+    def _explain_transfer(self, skill, new_situation: str) -> str:
+        """Explain how a skill might transfer to a new situation."""
+        # Simplified explanation - in production, use LLM
+        return f"The principle '{skill.principle}' applies because it addresses the core concept of {skill.name.replace('_', ' ')}."
 
     # ── Memory Lifecycle & Pruning ────────────────────────────────────
 
