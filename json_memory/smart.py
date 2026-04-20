@@ -120,6 +120,10 @@ def _keyword_relevance(fact_tokens: set[str], query_tokens: set[str],
     # Basic overlap
     intersection = fact_tokens & query_tokens
     
+    # Special case: perfect match (all tokens match)
+    if intersection == query_tokens and intersection == fact_tokens:
+        return 1.0
+    
     # Path token boost: matching path tokens are more meaningful
     # e.g., matching 'user' in 'user.profession' when query says 'who'
     path_boost = 0.0
