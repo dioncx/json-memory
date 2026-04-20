@@ -1,5 +1,62 @@
 # Changelog
 
+## v0.8.0 — Procedural Memory & Skill Transfer
+
+### Revolutionary Addition
+- **Procedural memory** — Learn PRINCIPLES, not just facts:
+  - `Skill` class: Stores transferable principles with strength tracking
+  - `ProceduralMemory`: Manages skills across domains
+  - Skills transfer across domains (bicycle → motorcycle)
+  - Strength increases with use, tracks transfer count
+
+### New Methods
+- `learn(experience, domain)` — Extract principles from experiences
+- `transfer(new_situation, domain)` — Find skills that apply to new situations
+- `apply_skill(skill_name, domain, outcome)` — Record skill application
+- `competence_map()` — Overview of all transferable skills
+
+### How It Works
+1. **Learn**: "I learned that forward momentum causes balance stability"
+2. **Principle extracted**: "forward momentum → balance stability"
+3. **Skill stored**: name="balance", principle="forward momentum → balance stability", domains=["cycling"]
+4. **Later**: "Need to balance motorcycle"
+5. **Transfer**: Skill found! Same principle applies to new domain
+6. **Apply**: Skill strengthens, domain added to skill
+
+### Real-World Example (Bicycle → Motorcycle)
+- Kid learns bicycle: "Balance by staying centered, use pedals for momentum"
+- Principle: "Balance = center of gravity + forward momentum"
+- Years later, motorcycle: Same principle applies!
+- Skill transfers even though specific memory wasn't recalled
+
+### Implementation
+- ProceduralMemory class with domain indexing
+- Domain similarity detection (substring, prefix, suffix matching)
+- Pattern-based principle extraction (causal, requirement, improvement)
+- Skill strength tracking (starts at 1.0, strengthens with use)
+- Transfer count tracking (how many times skill transferred)
+- 17 new tests for procedural memory (all passing)
+
+### Usage
+```python
+mem = SmartMemory("agent.json", procedural=True)
+
+# Learn from experience
+mem.learn("Learned that forward momentum causes balance stability", domain="cycling")
+
+# Later, facing new situation
+result = mem.transfer("Need to balance a motorcycle", domain="motorcycling")
+# → Finds balance skill from cycling!
+
+# Apply the skill
+mem.apply_skill("principle_0", "motorcycling", outcome="Successfully balanced motorcycle")
+```
+
+### Performance
+- **Total tests**: 189 passing (was 172)
+- **Bridges gap** between FACTS (what happened) and SKILLS (what you can do)
+
+
 ## v0.7.0 — Protected Facts & Tags
 
 ### Critical Fix
