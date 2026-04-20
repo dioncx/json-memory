@@ -48,6 +48,48 @@ EXTRACTION_PATTERNS = [
     (r"(?:remember|note|save) (?:that )?(.+)", "user.requested", 0.95),
     # Project names
     (r"(?:project (?:is|called|named)|working on) ([\w\-_]+)", "project.name", 0.7),
+    # Email addresses
+    (r"[\w.+-]+@[\w-]+\.[\w.-]+", "user.email", 0.9),
+    # Phone numbers
+    (r"(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}", "user.phone", 0.85),
+    # Social media handles
+    (r"@(\w+)", "user.social", 0.75),
+    # Job titles/companies
+    (r"(?:i(?:'m| am) (?:a|an) )([a-z]+(?:\s[a-z]+)*?)(?:\s+(?:at|for|with)\s+([A-Z][\w\s]+?))?(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.profession", 0.8),
+    # Skills/technologies
+    (r"(?:i(?:'m| am) (?:good at|skilled in|experienced with)|my skills (?:include|are)) ([\w\s,]+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.skills", 0.75),
+    # Goals/objectives
+    (r"(?:my goal is|i(?:'m| am) trying to|i want to) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.goals", 0.8),
+    # Detailed preferences
+    (r"(?:i prefer|i like|i enjoy|i love) (?:to )?(.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.likes", 0.65),
+    (r"(?:i dislike|i hate|i don't like|i avoid) (?:to )?(.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.dislikes", 0.65),
+    # Dates and times
+    (r"(?:my birthday is|i was born on|born on) (\w+ \d{1,2}(?:st|nd|rd|th)?(?:,? \d{4})?)", "user.birthday", 0.9),
+    (r"(?:i(?:'m| am) available (?:at|on|from)) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.availability", 0.7),
+    # Numbers and measurements
+    (r"(?:i(?:'m| am) (\d+) years old)", "user.age", 0.85),
+    (r"(?:my (?:height|weight) is) (\d+(?:\.\d+)?(?:\s*(?:cm|kg|lbs?|feet|ft|inches?|in))?)", "user.physical", 0.8),
+    # Locations (more detailed)
+    (r"(?:my (?:address|office|home) is) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.address", 0.85),
+    (r"(?:i work (?:at|in|from)) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.work_location", 0.75),
+    # Education
+    (r"(?:i (?:studied|graduated|major) (?:at|in|from)) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.education", 0.8),
+    # Interests/hobbies
+    (r"(?:my (?:hobbies|interests) (?:include|are)) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.hobbies", 0.7),
+    # Family/relationships
+    (r"(?:my (?:wife|husband|partner|spouse|kid|child|son|daughter) (?:is|are)) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.family", 0.75),
+    # Pets
+    (r"(?:my (?:pet|cat|dog) (?:is|are) (?:named|called)) (\w+)", "user.pets", 0.8),
+    # Health/medical
+    (r"(?:i have|i(?:'m| am) (?:allergic to|diagnosed with)) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.health", 0.7),
+    # Finance
+    (r"(?:my (?:salary|income|budget) is) (\$?\d+(?:,\d{3})*(?:\.\d{2})?(?:\s*(?:per\s+)?(?:year|month|week|hour|annually))?)", "user.financial", 0.75),
+    # Travel
+    (r"(?:i(?:'ve| have) (?:been to|visited|traveled to)) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.travel", 0.7),
+    # Food preferences
+    (r"(?:my favorite (?:food|cuisine|restaurant|meal) is) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.food", 0.7),
+    # Entertainment
+    (r"(?:my favorite (?:movie|show|book|music|artist|band|song) is) (.+?)(?:\s*\.|\s*,|\s+(?:and|but|so)\s|$)", "user.entertainment", 0.7),
 ]
 
 
