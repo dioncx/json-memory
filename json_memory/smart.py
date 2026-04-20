@@ -16,7 +16,7 @@ import time
 import math
 import json
 import threading
-from typing import Any, Optional, List, Dict
+from typing import Any, Optional, List, Dict, Tuple
 from pathlib import Path
 from collections import Counter
 
@@ -27,6 +27,9 @@ from .contradiction import detect_contradictions, Contradiction, ContradictionDe
 from .consolidation import consolidate_memory, ConsolidationGroup
 from .forgetting import ForgettingCurve, MemoryStrength
 from .visualizer import MemoryVisualizer, visualize_memory
+from .versioning import MemoryVersioning, MemoryDiff
+from .encryption import MemoryEncryption, EncryptedValue
+from .search import AdvancedSearch, SearchResult
 
 
 # ── Auto-Extractor Patterns ───────────────────────────────────────────
@@ -924,6 +927,23 @@ class SmartMemory:
         
         # Forgetting curve for memory decay modeling
         self.forgetting_curve = ForgettingCurve()
+        
+        # Versioning for tracking memory changes
+        self.versioning = MemoryVersioning()
+        
+        # Event callbacks for memory changes
+        self._event_callbacks: Dict[str, List[callable]] = {
+            'on_set': [],
+            'on_delete': [],
+            'on_update': [],
+            'on_change': [],  # Any change
+        }
+        
+        # Encryption for sensitive data
+        self.encryption: Optional[MemoryEncryption] = None
+        
+        # Advanced search capabilities
+        self.search_engine = AdvancedSearch(self)
 
         # Per-path metadata for scoring
         self._meta: dict[str, PathMeta] = {}
@@ -990,6 +1010,9 @@ class SmartMemory:
                         print(f"⚠️  Contradiction detected: {c.explanation}", flush=True)
             
             # Store the fact
+            old_value = self.mem.get(path)  # Get old value for versioning
+            is_new = old_value is None
+            
             self.mem.set(path, value, ttl=ttl)
             self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags)
 
@@ -1002,6 +1025,21 @@ class SmartMemory:
                     self.brain.link(tag, [path])
 
             self._save_meta()
+            
+            # Record version
+            operation = 'set' if is_new else 'update'
+            self.versioning.record_change(
+                path=path,
+                old_value=old_value,
+                new_value=value,
+                operation=operation,
+                metadata={'tags': tags, 'protected': protected, 'ttl': ttl}
+            )
+            
+            # Trigger events
+            self._trigger_event('on_set' if is_new else 'on_update', path, old_value, value)
+            self._trigger_event('on_change', path, old_value, value)
+            
             return result
 
     def get_contradictions(self) -> list[Contradiction]:
@@ -1285,6 +1323,8 @@ class SmartMemory:
     def forget(self, path: str):
         """Delete a fact and its metadata."""
         with self._lock:
+            old_value = self.mem.get(path)  # Get old value for versioning
+            
             self.mem.delete(path, prune=True)
             self._meta.pop(path, None)
             if self.tiered:
@@ -1292,6 +1332,18 @@ class SmartMemory:
                 self.tiered.warm.delete(path, prune=True)
                 self.tiered.cold.delete(path, prune=True)
             self._save_meta()
+            
+            # Record version
+            self.versioning.record_change(
+                path=path,
+                old_value=old_value,
+                new_value=None,
+                operation='delete'
+            )
+            
+            # Trigger events
+            self._trigger_event('on_delete', path, old_value, None)
+            self._trigger_event('on_change', path, old_value, None)
 
     def search(self, pattern: str) -> dict:
         """Find facts matching a glob pattern."""
@@ -1790,6 +1842,325 @@ class SmartMemory:
             String representation of memory visualization
         """
         return visualize_memory(self, format)
+
+    # ── Event System ──────────────────────────────────────────────
+    
+    def on(self, event: str, callback: callable) -> "SmartMemory":
+        """Register an event callback.
+        
+        Args:
+            event: Event name ('on_set', 'on_delete', 'on_update', 'on_change')
+            callback: Function to call when event occurs
+            
+        Returns:
+            Self for chaining
+        """
+        if event not in self._event_callbacks:
+            raise ValueError(f"Unknown event: {event}. Valid events: {list(self._event_callbacks.keys())}")
+        
+        self._event_callbacks[event].append(callback)
+        return self
+    
+    def off(self, event: str, callback: callable = None) -> "SmartMemory":
+        """Unregister an event callback.
+        
+        Args:
+            event: Event name
+            callback: Optional specific callback to remove (None = remove all)
+            
+        Returns:
+            Self for chaining
+        """
+        if event not in self._event_callbacks:
+            return self
+        
+        if callback is None:
+            self._event_callbacks[event].clear()
+        else:
+            self._event_callbacks[event] = [cb for cb in self._event_callbacks[event] if cb != callback]
+        
+        return self
+    
+    def _trigger_event(self, event: str, path: str, old_value: Any, new_value: Any):
+        """Internal: trigger event callbacks."""
+        for callback in self._event_callbacks.get(event, []):
+            try:
+                callback(path, old_value, new_value)
+            except Exception as e:
+                print(f"Event callback error ({event}): {e}", flush=True)
+    
+    # ── Versioning ────────────────────────────────────────────────
+    
+    def get_history(self, path: str = None, limit: int = 100) -> list:
+        """Get version history for a path or all paths.
+        
+        Args:
+            path: Optional path to filter by
+            limit: Maximum versions to return
+            
+        Returns:
+            List of version dicts
+        """
+        versions = self.versioning.get_history(path=path, limit=limit)
+        return [{
+            'version_id': v.version_id,
+            'timestamp': v.timestamp,
+            'path': v.path,
+            'old_value': v.old_value,
+            'new_value': v.new_value,
+            'operation': v.operation,
+            'metadata': v.metadata
+        } for v in versions]
+    
+    def get_value_at(self, path: str, timestamp: float) -> Tuple[Any, bool]:
+        """Get the value of a path at a specific time.
+        
+        Args:
+            path: Memory path
+            timestamp: Target timestamp
+            
+        Returns:
+            Tuple of (value, found)
+        """
+        return self.versioning.get_value_at(path, timestamp)
+    
+    def get_state_at(self, timestamp: float) -> Dict[str, Any]:
+        """Get complete memory state at a specific time.
+        
+        Args:
+            timestamp: Target timestamp
+            
+        Returns:
+            Dict of path -> value
+        """
+        return self.versioning.get_state_at(timestamp)
+    
+    def diff(self, timestamp_old: float, timestamp_new: float) -> Dict[str, Any]:
+        """Get differences between two points in time.
+        
+        Args:
+            timestamp_old: Earlier timestamp
+            timestamp_new: Later timestamp
+            
+        Returns:
+            Dict with 'added', 'modified', 'deleted'
+        """
+        diff = self.versioning.diff(timestamp_old, timestamp_new)
+        return {
+            'added': diff.added,
+            'modified': diff.modified,
+            'deleted': diff.deleted,
+            'timestamp_old': diff.timestamp_old,
+            'timestamp_new': diff.timestamp_new
+        }
+    
+    def get_recent_changes(self, seconds: float = 3600, limit: int = 100) -> list:
+        """Get recent changes within time window.
+        
+        Args:
+            seconds: Time window in seconds
+            limit: Maximum versions to return
+            
+        Returns:
+            List of version dicts
+        """
+        return self.get_history(limit=limit)
+    
+    def get_most_changed(self, limit: int = 10, seconds: float = None) -> List[Tuple[str, int]]:
+        """Get most frequently changed paths.
+        
+        Args:
+            limit: Maximum paths to return
+            seconds: Optional time window
+            
+        Returns:
+            List of (path, change_count) tuples
+        """
+        return self.versioning.get_most_changed(limit=limit, seconds=seconds)
+
+    # ── Encryption ────────────────────────────────────────────────
+    
+    def enable_encryption(self, master_key: str = None) -> "SmartMemory":
+        """Enable encryption for sensitive data.
+        
+        Args:
+            master_key: Optional master key (generated if not provided)
+            
+        Returns:
+            Self for chaining
+        """
+        self.encryption = MemoryEncryption(master_key)
+        return self
+    
+    def disable_encryption(self) -> "SmartMemory":
+        """Disable encryption."""
+        self.encryption = None
+        return self
+    
+    def remember_encrypted(self, path: str, value: Any, **kwargs) -> dict:
+        """Store a fact with encryption.
+        
+        Args:
+            path: Dotted path key
+            value: Value to encrypt and store
+            **kwargs: Additional arguments for remember()
+            
+        Returns:
+            Dict with 'success' (bool), 'contradictions' (list), 'warnings' (list)
+        """
+        if not self.encryption:
+            raise ValueError("Encryption not enabled. Call enable_encryption() first.")
+        
+        # Encrypt the value
+        encrypted = self.encryption.encrypt(value)
+        encrypted_dict = self.encryption.to_dict(encrypted)
+        
+        # Store encrypted value
+        result = self.remember(path, encrypted_dict, **kwargs)
+        
+        # Mark as encrypted in metadata
+        if path in self._meta:
+            self._meta[path].tags.append('encrypted')
+        
+        return result
+    
+    def recall_decrypted(self, path: str, default: Any = None) -> Any:
+        """Retrieve and decrypt a fact.
+        
+        Args:
+            path: Dotted path key
+            default: Default value if not found
+            
+        Returns:
+            Decrypted value or default
+        """
+        if not self.encryption:
+            raise ValueError("Encryption not enabled. Call enable_encryption() first.")
+        
+        value = self.recall(path)
+        
+        if value is None:
+            return default
+        
+        # Check if encrypted
+        if self.encryption.is_encrypted(value):
+            encrypted = self.encryption.from_dict(value)
+            return self.encryption.decrypt(encrypted)
+        
+        return value
+    
+    def is_encrypted(self, path: str) -> bool:
+        """Check if a path contains encrypted data.
+        
+        Args:
+            path: Dotted path key
+            
+        Returns:
+            True if encrypted
+        """
+        if not self.encryption:
+            return False
+        
+        value = self.recall(path)
+        if value is None:
+            return False
+        
+        return self.encryption.is_encrypted(value)
+
+    # ── Advanced Search ───────────────────────────────────────────
+    
+    def search_regex(self, pattern: str, field: str = 'both', 
+                    case_sensitive: bool = False) -> List[Dict[str, Any]]:
+        """Search using regular expressions.
+        
+        Args:
+            pattern: Regex pattern to search for
+            field: Where to search ('path', 'value', 'both')
+            case_sensitive: Whether to use case-sensitive matching
+            
+        Returns:
+            List of result dicts
+        """
+        results = self.search_engine.regex_search(pattern, field, case_sensitive)
+        return [{
+            'path': r.path,
+            'value': r.value,
+            'score': r.score,
+            'match_type': r.match_type,
+            'highlights': r.highlights
+        } for r in results]
+    
+    def search_fuzzy(self, query: str, threshold: float = 0.6,
+                    field: str = 'both') -> List[Dict[str, Any]]:
+        """Search using fuzzy string matching.
+        
+        Args:
+            query: Search query
+            threshold: Minimum similarity score (0.0-1.0)
+            field: Where to search ('path', 'value', 'both')
+            
+        Returns:
+            List of result dicts
+        """
+        results = self.search_engine.fuzzy_search(query, threshold, field)
+        return [{
+            'path': r.path,
+            'value': r.value,
+            'score': r.score,
+            'match_type': r.match_type,
+            'highlights': r.highlights
+        } for r in results]
+    
+    def search_full_text(self, query: str, case_sensitive: bool = False) -> List[Dict[str, Any]]:
+        """Full-text search across all memory.
+        
+        Args:
+            query: Search query (supports multiple words)
+            case_sensitive: Whether to use case-sensitive matching
+            
+        Returns:
+            List of result dicts
+        """
+        results = self.search_engine.full_text_search(query, case_sensitive)
+        return [{
+            'path': r.path,
+            'value': r.value,
+            'score': r.score,
+            'match_type': r.match_type,
+            'highlights': r.highlights
+        } for r in results]
+    
+    def search_advanced(self, query: str, search_type: str = 'auto', **kwargs) -> List[Dict[str, Any]]:
+        """Unified advanced search interface.
+        
+        Args:
+            query: Search query
+            search_type: Type of search ('auto', 'regex', 'fuzzy', 'full_text', 'semantic')
+            **kwargs: Additional arguments for specific search types
+            
+        Returns:
+            List of result dicts
+        """
+        results = self.search_engine.search(query, search_type, **kwargs)
+        return [{
+            'path': r.path,
+            'value': r.value,
+            'score': r.score,
+            'match_type': r.match_type,
+            'highlights': r.highlights
+        } for r in results]
+    
+    def suggest_paths(self, partial: str, limit: int = 10) -> List[str]:
+        """Suggest paths based on partial input.
+        
+        Args:
+            partial: Partial path input
+            limit: Maximum suggestions
+            
+        Returns:
+            List of suggested paths
+        """
+        return self.search_engine.suggest(partial, limit)
 
     # ── Private Helpers ────────────────────────────────────────────
 
