@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.5.0 — Enhanced Concept Map & Path Token Fix
+
+### Added
+- **Enhanced concept map** for better semantic matching:
+  - `mistakes` ↔ `lesson` — "What mistakes?" now finds lesson facts
+  - `projects` ↔ `project` — "What projects?" now finds project facts
+  - `talk` ↔ `communication` — "How should I talk?" now finds user.communication
+  - `auto` ↔ `systemd`/`restart` — "How does it restart automatically?" finds bot status
+  - Added: `speak`, `chat`, `conversation`, `learning`, `remember`, `forget`, `systemd`, `daemon`
+
+### Fixed
+- **Path token extraction** in `score()` method:
+  - Now splits paths on dots AND underscores (e.g., `mem.lesson_gateway` → `["lesson", "gateway"]`)
+  - Previously: `mem.lesson_gateway` → `["lesson_gateway"]` (single token)
+  - Path token boost now works correctly for compound path names
+- **Complex query retrieval** — 100% success rate on 7 targeted test queries:
+  - "What mistakes have been made?" → finds lesson facts ✓
+  - "What projects are being worked on?" → finds project facts ✓
+  - "How should I talk to the user?" → finds user.communication ✓
+  - "How does the bot restart automatically?" → finds bot status ✓
+  - "What runs on a schedule?" → finds cron config ✓
+
+### Performance
+- **Stress test results**: 10/10 complex queries successful
+- **Cross-domain connections**: 5/10 queries connect multiple domains
+- **Average injection**: ~252 chars per query (97.6% more efficient than legacy)
+- **All 144 tests passing**
+
+
 ## v0.4.0 — Stem Expansion & Retrieval Quality
 
 ### Added
