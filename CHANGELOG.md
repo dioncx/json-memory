@@ -1,5 +1,59 @@
 # Changelog
 
+## v1.8.0 — Memory Introspection & Health
+
+### 🔍 Overwrite Detection
+Memory no longer silently overwrites facts. You know when something changed.
+
+- `remember()` now returns `overwritten`, `old_value`, `is_new` in result dict
+- Warning emitted when a value actually changes (not just re-stored)
+- `PathMeta.overwrite_count` tracks how many times a path was updated
+- `lifecycle_stats()` warns about frequently overwritten paths
+
+```python
+result = sm.remember("user.status", "offline")
+# {'success': True, 'overwritten': True, 'old_value': 'online', 
+#  'is_new': False, 'warnings': ["Overwrote 'user.status': 'online' -> 'offline'"]}
+```
+
+### 📊 knowledge_summary()
+"What do I know about X?" — now answerable.
+
+```python
+# Full overview grouped by prefix
+sm.knowledge_summary()
+# {'total_facts': 42, 'groups': {'user': [...], 'project': [...]}, 'summary': '...'}
+
+# Filter by topic
+sm.knowledge_summary(topic="trading")
+
+# Group by confidence level
+sm.knowledge_summary(group_by="confidence")
+# {'groups': {'high_confidence': [...], 'low_confidence': [...]}}
+```
+
+### ⚠️ Health Warnings
+`lifecycle_stats()` now includes actionable alerts:
+
+```python
+stats = sm.lifecycle_stats()
+stats['warnings']
+# ['WARNING: Memory 89% full - plan for growth.',
+#  '3 fact(s) with confidence < 0.5 - may pollute recall.',
+#  'Frequently overwritten paths: user.status (7x) - consider versioning.']
+```
+
+Warnings detect:
+- High capacity utilization (>70%, >90%)
+- Expired facts still in memory
+- Facts never accessed after creation
+- Frequently overwritten paths
+- Low-confidence facts polluting recall
+- Contradictions in memory
+- Cold storage bloat (>100 facts)
+
+---
+
 ## v1.7.0 — Intelligent Recall & Memory Merging
 
 ### 🧠 Forgetting Curve Integrated into Recall

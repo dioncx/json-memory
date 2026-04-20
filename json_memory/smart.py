@@ -755,7 +755,7 @@ class PathMeta:
     """Tracks per-path metadata for scoring and lifecycle management."""
     __slots__ = ['last_accessed', 'access_count', 'created_at', 'tier', 'tokens', 
                  'ttl', 'expires_at', 'archived', 'size_bytes', 'protected', 'tags',
-                 'confidence']
+                 'confidence', 'overwrite_count']
 
     def __init__(self, ttl: int = None, protected: bool = False, tags: list[str] = None,
                  confidence: float = 1.0):
@@ -772,6 +772,7 @@ class PathMeta:
         self.protected = protected  # Protected facts are immune to pruning
         self.tags = tags or []
         self.confidence = confidence  # 0.0-1.0: how confident is this fact?
+        self.overwrite_count = 0  # How many times this path was overwritten
 
 
 class TieredMemory:
@@ -991,13 +992,17 @@ class SmartMemory:
                        Affects recall scoring — lower confidence = lower relevance.
 
         Returns:
-            Dict with 'success' (bool), 'contradictions' (list), 'warnings' (list)
+            Dict with 'success' (bool), 'contradictions' (list), 'warnings' (list),
+            'overwritten' (bool), 'old_value' (any), 'is_new' (bool)
         """
         with self._lock:
             result = {
                 'success': True,
                 'contradictions': [],
-                'warnings': []
+                'warnings': [],
+                'overwritten': False,
+                'old_value': None,
+                'is_new': True,
             }
             
             # Check for contradictions if requested
@@ -1020,6 +1025,19 @@ class SmartMemory:
             # Store the fact
             old_value = self.mem.get(path)  # Get old value for versioning
             is_new = old_value is None
+            
+            # Track overwrite
+            result['is_new'] = is_new
+            if not is_new:
+                result['old_value'] = old_value
+                if old_value != value:
+                    result['overwritten'] = True
+                    result['warnings'].append(
+                        f"Overwrote '{path}': {old_value!r} → {value!r}"
+                    )
+                    # Increment overwrite count in meta
+                    if path in self._meta:
+                        self._meta[path].overwrite_count += 1
             
             self.mem.set(path, value, ttl=ttl)
             self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags,
@@ -1994,6 +2012,127 @@ class SmartMemory:
 
     # ── Stats & Debug ────────────────────────────────────────────────
 
+    def knowledge_summary(self, topic: str = None, group_by: str = "prefix") -> dict:
+        """Get a structured overview of what's stored in memory.
+        
+        Solves: "what do I know about X?" — returns facts grouped by topic/prefix.
+        
+        Args:
+            topic: Filter by topic keyword (matches against path and value).
+                   If None, returns overview of all knowledge.
+            group_by: How to group facts:
+                - "prefix": Group by first path segment (e.g., "user", "project")
+                - "tag": Group by tags
+                - "confidence": Group by confidence level (high/medium/low)
+                
+        Returns:
+            Dict with:
+            - 'total_facts': Number of facts
+            - 'groups': Dict of {group_name: [facts]}
+            - 'topics': List of detected topic names
+            - 'summary': Human-readable summary string
+        """
+        with self._lock:
+            all_paths = self.mem.paths()
+            
+            # Filter by topic if specified
+            if topic:
+                topic_lower = topic.lower()
+                filtered = []
+                for path in all_paths:
+                    value = self.mem.get(path)
+                    # Match against path segments and value content
+                    path_match = topic_lower in path.lower()
+                    value_match = False
+                    if value is not None:
+                        val_str = json.dumps(value, ensure_ascii=False).lower() if not isinstance(value, str) else value.lower()
+                        value_match = topic_lower in val_str
+                    if path_match or value_match:
+                        filtered.append(path)
+                all_paths = filtered
+            
+            # Group facts
+            groups = {}
+            
+            if group_by == "prefix":
+                for path in all_paths:
+                    prefix = path.split('.')[0] if '.' in path else "root"
+                    if prefix not in groups:
+                        groups[prefix] = []
+                    value = self.mem.get(path)
+                    meta = self._meta.get(path)
+                    groups[prefix].append({
+                        'path': path,
+                        'value': value,
+                        'confidence': meta.confidence if meta else 1.0,
+                        'age_days': round((time.time() - (meta.created_at if meta else time.time())) / 86400, 1),
+                    })
+            
+            elif group_by == "tag":
+                # Group by tags, untagged goes to "untagged"
+                for path in all_paths:
+                    meta = self._meta.get(path)
+                    tags = meta.tags if meta else []
+                    value = self.mem.get(path)
+                    entry = {
+                        'path': path,
+                        'value': value,
+                        'confidence': meta.confidence if meta else 1.0,
+                    }
+                    if tags:
+                        for tag in tags:
+                            if tag not in groups:
+                                groups[tag] = []
+                            groups[tag].append(entry)
+                    else:
+                        if "untagged" not in groups:
+                            groups["untagged"] = []
+                        groups["untagged"].append(entry)
+            
+            elif group_by == "confidence":
+                for path in all_paths:
+                    meta = self._meta.get(path)
+                    conf = meta.confidence if meta else 1.0
+                    value = self.mem.get(path)
+                    entry = {'path': path, 'value': value, 'confidence': conf}
+                    
+                    if conf >= 0.8:
+                        bucket = "high_confidence"
+                    elif conf >= 0.5:
+                        bucket = "medium_confidence"
+                    else:
+                        bucket = "low_confidence"
+                    
+                    if bucket not in groups:
+                        groups[bucket] = []
+                    groups[bucket].append(entry)
+            
+            # Detect unique topics (first path segments)
+            topics = sorted(set(p.split('.')[0] for p in all_paths if '.' in p))
+            
+            # Build human-readable summary
+            summary_lines = []
+            if topic:
+                summary_lines.append(f"Knowledge about '{topic}': {len(all_paths)} facts")
+            else:
+                summary_lines.append(f"Memory overview: {len(all_paths)} facts across {len(topics)} topics")
+            
+            for group_name, facts in sorted(groups.items()):
+                summary_lines.append(f"\n  {group_name} ({len(facts)} facts):")
+                for f in facts[:5]:  # Show max 5 per group
+                    val_str = str(f['value'])[:50]
+                    conf_str = f" [conf:{f['confidence']:.1f}]" if f['confidence'] < 1.0 else ""
+                    summary_lines.append(f"    - {f['path']}: {val_str}{conf_str}")
+                if len(facts) > 5:
+                    summary_lines.append(f"    ... and {len(facts) - 5} more")
+            
+            return {
+                'total_facts': len(all_paths),
+                'groups': groups,
+                'topics': topics,
+                'summary': '\n'.join(summary_lines),
+            }
+
     def stats(self) -> dict:
         """Memory stats with scoring metadata."""
         base = self.mem.stats()
@@ -2916,6 +3055,52 @@ class SmartMemory:
             else:
                 health = 'healthy'
             
+            # Actionable health warnings
+            warnings = []
+            
+            # Capacity warning
+            capacity = self.mem.stats()
+            utilization_pct = float(capacity.get('utilization', '0%').replace('%', ''))
+            if utilization_pct > 90:
+                warnings.append(f"CRITICAL: Memory {utilization_pct:.0f}% full - eviction imminent. Consider increasing max_chars or pruning.")
+            elif utilization_pct > 70:
+                warnings.append(f"WARNING: Memory {utilization_pct:.0f}% full - plan for growth.")
+            
+            # Expired facts warning
+            if expired > 0:
+                warnings.append(f"{expired} expired fact(s) still in memory - run purge_expired() to reclaim budget.")
+            
+            # Never-accessed facts (created but never recalled)
+            never_accessed = sum(1 for m in self._meta.values() 
+                               if m.access_count <= 1 and (now - m.created_at) > 3600)
+            if never_accessed > 0:
+                pct = never_accessed / total_facts * 100
+                if pct > 30:
+                    warnings.append(f"{never_accessed} facts ({pct:.0f}%) never accessed after creation - consider removing unused data.")
+            
+            # High overwrite count
+            high_overwrite = [(p, m.overwrite_count) for p, m in self._meta.items() 
+                             if m.overwrite_count > 3]
+            if high_overwrite:
+                top = sorted(high_overwrite, key=lambda x: x[1], reverse=True)[:3]
+                paths_str = ", ".join(f"{p} ({c}x)" for p, c in top)
+                warnings.append(f"Frequently overwritten paths: {paths_str} - consider if these need versioning.")
+            
+            # Low confidence facts
+            low_conf = sum(1 for m in self._meta.values() if m.confidence < 0.5)
+            if low_conf > 0:
+                warnings.append(f"{low_conf} fact(s) with confidence < 0.5 - may pollute recall. Review or remove.")
+            
+            # Contradictions
+            contradictions = self.get_contradictions()
+            if contradictions:
+                warnings.append(f"{len(contradictions)} contradiction(s) detected - memory may be inconsistent.")
+            
+            # Cold storage bloat
+            cold = self.cold_stats()
+            if cold['count'] > 100:
+                warnings.append(f"Cold storage has {cold['count']} archived facts - consider purge_cold(keep_last=50).")
+            
             return {
                 'total_facts': total_facts,
                 'total_chars': total_chars,
@@ -2927,7 +3112,13 @@ class SmartMemory:
                 'warm_facts': tier_counts['warm'],
                 'cold_facts': tier_counts['cold'],
                 'memory_health': health,
-                'cold_storage': self.cold_stats(),
+                'cold_storage': cold,
+                'never_accessed': never_accessed,
+                'low_confidence_facts': low_conf,
+                'high_overwrite_paths': len(high_overwrite),
+                'capacity_utilization': utilization_pct,
+                'warnings': warnings,
+                'warning_count': len(warnings),
             }
 
     # ── Internal ─────────────────────────────────────────────────────
@@ -3005,6 +3196,7 @@ class SmartMemory:
                     meta.protected = data.get('protected', False)
                     meta.tags = data.get('tags', [])
                     meta.confidence = data.get('confidence', 1.0)
+                    meta.overwrite_count = data.get('overwrite_count', 0)
                     self._meta[path] = meta
             except Exception:
                 pass
@@ -3027,6 +3219,7 @@ class SmartMemory:
                     'protected': meta.protected,
                     'tags': meta.tags,
                     'confidence': meta.confidence,
+                    'overwrite_count': meta.overwrite_count,
                 },
             self._meta_path.parent.mkdir(parents=True, exist_ok=True)
             self._meta_path.write_text(json.dumps(raw, ensure_ascii=False), encoding='utf-8')
