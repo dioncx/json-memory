@@ -10,7 +10,7 @@ from .contradiction import detect_contradictions, Contradiction, ContradictionDe
 from .consolidation import consolidate_memory, ConsolidationGroup
 from .forgetting import ForgettingCurve, MemoryStrength
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __all__ = [
     "Memory", "Synapse", "Schema", "WeightGate",
     "SmartMemory", "TieredMemory",

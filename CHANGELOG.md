@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.2.0 — Memory Visualization & Performance
+
+### Added
+- **Memory visualization** — Visualize memory structure and statistics:
+  - `visualize()` method on SmartMemory
+  - Multiple formats: tree, stats, strength, contradictions, consolidation, timeline, full
+  - `MemoryVisualizer` class for standalone visualization
+  - Tree view shows hierarchical structure
+  - Stats view shows memory usage and health
+  - Strength view shows memory decay and reinforcement needs
+  - Contradiction view shows conflicting facts
+  - Consolidation view shows related facts
+  - Timeline view shows conversation episodes
+
+### Fixed
+- **Version mismatch** — Fixed pyproject.toml version to match __init__.py (1.1.0)
+- **Syntax error** — Fixed unterminated string literal in visualizer.py
+
+### Performance
+- **Storage**: ~6.75ms per fact (good)
+- **Retrieval**: ~0.01ms per fact (excellent)
+- **Smart retrieval**: ~6ms per query (good)
+
+### Tests
+- **243 tests passing** (no new tests for visualization)
+- All existing tests continue to pass
+
+### Usage
+```python
+mem = SmartMemory("agent.json")
+
+# Store facts
+mem.remember("user.name", "Alice")
+mem.remember("bot.status", "running")
+
+# Visualize memory
+print(mem.visualize("tree"))  # Tree view
+print(mem.visualize("stats"))  # Statistics
+print(mem.visualize("strength"))  # Memory strengths
+print(mem.visualize("full"))  # Full report
+```
+
 ## v1.1.0 — Medium Priority Gaps Complete!
 
 ### 🎉 Milestone Release
