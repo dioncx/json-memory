@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.2.0 — Memory Visualization & Performance
+## v1.2.0 — Memory Visualization & Enhanced Auto-Extraction
 
 ### Added
 - **Memory visualization** — Visualize memory structure and statistics:
@@ -13,6 +13,27 @@
   - Contradiction view shows conflicting facts
   - Consolidation view shows related facts
   - Timeline view shows conversation episodes
+
+- **Enhanced auto-extraction** — 20+ new extraction patterns:
+  - Email addresses → `user.email`
+  - Phone numbers → `user.phone`
+  - Social media handles → `user.social`
+  - Job titles/companies → `user.profession`
+  - Skills/technologies → `user.skills`
+  - Goals/objectives → `user.goals`
+  - Detailed preferences → `user.likes`, `user.dislikes`
+  - Dates and times → `user.birthday`, `user.availability`
+  - Numbers and measurements → `user.age`, `user.physical`
+  - Locations → `user.address`, `user.work_location`
+  - Education → `user.education`
+  - Interests/hobbies → `user.hobbies`
+  - Family/relationships → `user.family`
+  - Pets → `user.pets`
+  - Health/medical → `user.health`
+  - Finance → `user.financial`
+  - Travel → `user.travel`
+  - Food preferences → `user.food`
+  - Entertainment → `user.entertainment`
 
 ### Fixed
 - **Version mismatch** — Fixed pyproject.toml version to match __init__.py (1.1.0)
@@ -40,6 +61,13 @@ print(mem.visualize("tree"))  # Tree view
 print(mem.visualize("stats"))  # Statistics
 print(mem.visualize("strength"))  # Memory strengths
 print(mem.visualize("full"))  # Full report
+
+# Enhanced auto-extraction
+mem.process_conversation("My email is alice@example.com")
+# → auto-stores user.email: alice@example.com
+
+mem.process_conversation("I'm a software engineer at Google")
+# → auto-stores user.profession: software engineer
 ```
 
 ## v1.1.0 — Medium Priority Gaps Complete!
