@@ -1,5 +1,54 @@
 # Changelog
 
+## v1.4.0 — Cold Storage & Auto-Archival
+
+### 🧊 New Eviction Policy: `lru-archive`
+The new default for SmartMemory. When memory fills up, oldest facts are evicted to a `.cold.json` file instead of being deleted forever. Nothing is lost — just archived.
+
+- ✓ **lru-archive eviction** — Auto-evict oldest facts to cold storage on overflow
+- ✓ **cold_stats()** — Inspect archived facts: count, paths, oldest timestamp
+- ✓ **recover_from_cold(path)** — Restore archived facts back to hot memory
+- ✓ **on_evict callback** — Hook custom logic into the eviction pipeline
+- ✓ **Backward compatible** — `"lru"` and `"error"` policies unchanged
+
+### Behavior Matrix
+
+| Policy | Overflow | Data preserved? |
+|--------|----------|-----------------|
+| `"error"` | Raises ValueError | Yes (manual) |
+| `"lru"` | Auto-evict | ❌ Gone forever |
+| `"lru-archive"` ✅ | Auto-evict | ✅ Saved to cold file |
+
+### Usage
+
+```python
+# Default — cold storage enabled
+sm = SmartMemory(path="memory.json", max_chars=5000)
+
+# Facts auto-archived when memory fills up
+sm.remember("user.name", "Alice")
+sm.remember("project.name", "Hermes")
+
+# Inspect cold storage
+stats = sm.cold_stats()
+print(stats)  # {'count': 3, 'paths': [...], 'oldest': '2026-04-20 ...'}
+
+# Recover archived fact
+sm.recover_from_cold("user.name")
+
+# Custom eviction hook
+def my_hook(path, value):
+    print(f"Evicted: {path}")
+
+mem = Memory(max_chars=1000, eviction_policy="lru", on_evict=my_hook)
+```
+
+### Changed
+- **SmartMemory default** — `eviction_policy` now defaults to `"lru-archive"` (was effectively `"error"`)
+- **Memory.__init__** — New params: `on_evict`, `cold_storage_path`
+
+---
+
 ## v1.3.0 — Perfect Memory System
 
 ### 🎉 Major Release
