@@ -6,11 +6,17 @@ from .schema import Schema
 from .compress import compress, decompress, savings_report
 from .weight_gate import WeightGate, HAS_SNOWBALL
 from .smart import SmartMemory, TieredMemory
+from .contradiction import detect_contradictions, Contradiction, ContradictionDetector
+from .consolidation import consolidate_memory, ConsolidationGroup
+from .forgetting import ForgettingCurve, MemoryStrength
 
-__version__ = "0.2.2"
+__version__ = "1.1.0"
 __all__ = [
     "Memory", "Synapse", "Schema", "WeightGate",
     "SmartMemory", "TieredMemory",
     "compress", "decompress", "savings_report",
     "HAS_SNOWBALL",
+    "detect_contradictions", "Contradiction", "ContradictionDetector",
+    "consolidate_memory", "ConsolidationGroup",
+    "ForgettingCurve", "MemoryStrength",
 ]

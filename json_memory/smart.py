@@ -16,13 +16,16 @@ import time
 import math
 import json
 import threading
-from typing import Any, Optional
+from typing import Any, Optional, List, Dict
 from pathlib import Path
 from collections import Counter
 
 from .memory import Memory
 from .synapse import Synapse
 from .concept_map import expand_query_semantic, get_concept_category
+from .contradiction import detect_contradictions, Contradiction, ContradictionDetector
+from .consolidation import consolidate_memory, ConsolidationGroup
+from .forgetting import ForgettingCurve, MemoryStrength
 
 
 # ── Auto-Extractor Patterns ───────────────────────────────────────────
@@ -875,6 +878,9 @@ class SmartMemory:
         self.procedural = ProceduralMemory(
             path=str(self.path.with_suffix('.skills.json'))
         ) if procedural else None
+        
+        # Forgetting curve for memory decay modeling
+        self.forgetting_curve = ForgettingCurve()
 
         # Per-path metadata for scoring
         self._meta: dict[str, PathMeta] = {}
@@ -902,7 +908,7 @@ class SmartMemory:
     # ── Core Operations ──────────────────────────────────────────────
 
     def remember(self, path: str, value, ttl: int = None, tags: list[str] = None, 
-                 protected: bool = False):
+                 protected: bool = False, check_contradictions: bool = True) -> dict:
         """Store a fact. Use dotted paths: 'user.name', 'project.status'
 
         Args:
@@ -911,8 +917,36 @@ class SmartMemory:
             ttl: Optional time-to-live in seconds.
             tags: Optional list of tags for categorization.
             protected: If True, fact is immune to pruning (for critical identity facts).
+            check_contradictions: If True, check for contradictions before storing.
+
+        Returns:
+            Dict with 'success' (bool), 'contradictions' (list), 'warnings' (list)
         """
         with self._lock:
+            result = {
+                'success': True,
+                'contradictions': [],
+                'warnings': []
+            }
+            
+            # Check for contradictions if requested
+            if check_contradictions:
+                existing_facts = {}
+                for existing_path in self.mem.paths():
+                    existing_value = self.mem.get(existing_path)
+                    if existing_value is not None:
+                        existing_facts[existing_path] = existing_value
+                
+                contradictions = detect_contradictions(path, value, existing_facts)
+                if contradictions:
+                    result['contradictions'] = contradictions
+                    result['warnings'].append(f"Found {len(contradictions)} contradiction(s)")
+                    
+                    # Log contradictions but don't block storage
+                    for c in contradictions:
+                        print(f"⚠️  Contradiction detected: {c.explanation}", flush=True)
+            
+            # Store the fact
             self.mem.set(path, value, ttl=ttl)
             self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags)
 
@@ -925,6 +959,277 @@ class SmartMemory:
                     self.brain.link(tag, [path])
 
             self._save_meta()
+            return result
+
+    def get_contradictions(self) -> list[Contradiction]:
+        """Get all contradictions in memory.
+        
+        Returns:
+            List of Contradiction objects found in memory.
+        """
+        with self._lock:
+            all_facts = {}
+            for path in self.mem.paths():
+                value = self.mem.get(path)
+                if value is not None:
+                    all_facts[path] = value
+            
+            contradictions = []
+            detector = ContradictionDetector()
+            
+            # Check each fact against all others
+            paths = list(all_facts.keys())
+            for i, path1 in enumerate(paths):
+                for path2 in paths[i+1:]:
+                    value1 = all_facts[path1]
+                    value2 = all_facts[path2]
+                    
+                    # Check both directions
+                    contradictions.extend(detector.detect(path1, value1, {path2: value2}))
+                    contradictions.extend(detector.detect(path2, value2, {path1: value1}))
+            
+            # Remove duplicates
+            seen = set()
+            unique_contradictions = []
+            for c in contradictions:
+                key = (c.existing_path, c.new_path, c.contradiction_type)
+                if key not in seen:
+                    seen.add(key)
+                    unique_contradictions.append(c)
+            
+            return unique_contradictions
+
+    def consolidate_memory(self, max_groups: int = 10) -> List[ConsolidationGroup]:
+        """Find groups of related facts that can be consolidated.
+        
+        Args:
+            max_groups: Maximum number of groups to return
+            
+        Returns:
+            List of ConsolidationGroup objects with consolidation suggestions
+        """
+        with self._lock:
+            all_facts = {}
+            for path in self.mem.paths():
+                value = self.mem.get(path)
+                if value is not None:
+                    all_facts[path] = value
+            
+            return consolidate_memory(all_facts, max_groups)
+    
+    def auto_consolidate(self, min_confidence: float = 0.7) -> dict:
+        """Automatically consolidate high-confidence groups.
+        
+        Args:
+            min_confidence: Minimum confidence threshold for auto-consolidation
+            
+        Returns:
+            Dict with 'consolidated' (list), 'skipped' (list), 'warnings' (list)
+        """
+        with self._lock:
+            result = {
+                'consolidated': [],
+                'skipped': [],
+                'warnings': []
+            }
+            
+            # Get consolidation suggestions
+            groups = self.consolidate_memory(max_groups=20)
+            
+            for group in groups:
+                if group.confidence >= min_confidence:
+                    # Auto-consolidate
+                    self.remember(group.suggested_path, group.suggested_value, 
+                                tags=['consolidated'])
+                    
+                    # Mark original facts for review (don't delete automatically)
+                    for path in group.paths:
+                        if path != group.suggested_path:
+                            # Add a tag to indicate it's been consolidated
+                            if path in self._meta:
+                                if 'consolidated' not in self._meta[path].tags:
+                                    self._meta[path].tags.append('consolidated')
+                    
+                    result['consolidated'].append({
+                        'paths': group.paths,
+                        'suggested_path': group.suggested_path,
+                        'suggested_value': group.suggested_value,
+                        'reason': group.reason
+                    })
+                else:
+                    result['skipped'].append({
+                        'paths': group.paths,
+                        'confidence': group.confidence,
+                        'reason': group.reason
+                    })
+            
+            if result['consolidated']:
+                result['warnings'].append(f"Auto-consolidated {len(result['consolidated'])} groups")
+                self._save_meta()
+            
+            return result
+
+    def get_memory_strength(self, path: str, memory_type: str = 'fact') -> Optional[MemoryStrength]:
+        """Get the strength analysis for a memory.
+        
+        Args:
+            path: Memory path
+            memory_type: Type of memory ('identity', 'skill', 'fact', 'event', 'temporary')
+            
+        Returns:
+            MemoryStrength object or None if path not found
+        """
+        with self._lock:
+            if path not in self._meta:
+                return None
+            
+            meta = self._meta[path]
+            value = self.mem.get(path)
+            
+            if value is None:
+                return None
+            
+            # Get reinforcement count from tags or default to 0
+            reinforcement_count = 0
+            if 'reinforced' in meta.tags:
+                reinforcement_count = meta.tags.count('reinforced')
+            
+            return self.forgetting_curve.analyze_memory(
+                path=path,
+                value=value,
+                initial_strength=1.0,  # Assume full strength when first stored
+                last_reinforced=meta.last_accessed,
+                reinforcement_count=reinforcement_count,
+                memory_type=memory_type
+            )
+    
+    def get_memories_needing_reinforcement(self, max_items: int = 10,
+                                         memory_type: str = None) -> List[Dict[str, Any]]:
+        """Get memories that need reinforcement based on forgetting curve.
+        
+        Args:
+            max_items: Maximum items to return
+            memory_type: Optional filter by memory type
+            
+        Returns:
+            List of memory dicts with strength analysis
+        """
+        with self._lock:
+            memories = []
+            
+            for path in self.mem.paths():
+                value = self.mem.get(path)
+                if value is None:
+                    continue
+                
+                meta = self._meta.get(path)
+                if not meta:
+                    continue
+                
+                # Get reinforcement count
+                reinforcement_count = 0
+                if 'reinforced' in meta.tags:
+                    reinforcement_count = meta.tags.count('reinforced')
+                
+                # Determine memory type from path or tags
+                detected_type = memory_type or 'fact'
+                if 'identity' in meta.tags or 'user' in path:
+                    detected_type = 'identity'
+                elif 'skill' in meta.tags:
+                    detected_type = 'skill'
+                elif 'event' in meta.tags or 'meeting' in path:
+                    detected_type = 'event'
+                elif 'temporary' in meta.tags or 'temp' in path:
+                    detected_type = 'temporary'
+                
+                memories.append({
+                    'path': path,
+                    'value': value,
+                    'initial_strength': 1.0,
+                    'last_reinforced': meta.last_accessed,
+                    'reinforcement_count': reinforcement_count,
+                    'memory_type': detected_type,
+                    'tags': meta.tags,
+                    'protected': meta.protected,
+                })
+            
+            # Filter by memory type if specified
+            if memory_type:
+                memories = [m for m in memories if m['memory_type'] == memory_type]
+            
+            return self.forgetting_curve.prioritize_for_reinforcement(
+                memories, max_items=max_items
+            )
+    
+    def simulate_memory_decay(self, path: str, days: int = 30,
+                            memory_type: str = 'fact') -> List[Dict[str, Any]]:
+        """Simulate how a memory will decay over time.
+        
+        Args:
+            path: Memory path
+            days: Number of days to simulate
+            memory_type: Type of memory
+            
+        Returns:
+            List of daily strength values
+        """
+        with self._lock:
+            if path not in self._meta:
+                return []
+            
+            meta = self._meta[path]
+            value = self.mem.get(path)
+            
+            if value is None:
+                return []
+            
+            # Get reinforcement count
+            reinforcement_count = 0
+            if 'reinforced' in meta.tags:
+                reinforcement_count = meta.tags.count('reinforced')
+            
+            return self.forgetting_curve.simulate_decay(
+                initial_strength=1.0,
+                reinforcement_count=reinforcement_count,
+                memory_type=memory_type,
+                days=days
+            )
+    
+    def reinforce_memory(self, path: str, boost_strength: float = 0.2) -> dict:
+        """Reinforce a memory (strengthen it against forgetting).
+        
+        Args:
+            path: Memory path to reinforce
+            boost_strength: How much to boost strength (0.0-1.0)
+            
+        Returns:
+            Dict with 'success' (bool), 'new_strength' (float), 'message' (str)
+        """
+        with self._lock:
+            if path not in self._meta:
+                return {'success': False, 'new_strength': 0, 'message': 'Path not found'}
+            
+            meta = self._meta[path]
+            
+            # Add reinforcement tag
+            if 'reinforced' not in meta.tags:
+                meta.tags.append('reinforced')
+            
+            # Update last accessed time (acts as reinforcement)
+            meta.last_accessed = time.time()
+            
+            # Calculate new strength
+            strength_analysis = self.get_memory_strength(path)
+            new_strength = strength_analysis.current_strength + boost_strength if strength_analysis else 1.0
+            new_strength = min(1.0, new_strength)
+            
+            self._save_meta()
+            
+            return {
+                'success': True,
+                'new_strength': new_strength,
+                'message': f'Reinforced {path} (strength: {new_strength:.3f})'
+            }
 
     def recall(self, path: str, default=None):
         """Retrieve a fact by exact dotted path."""

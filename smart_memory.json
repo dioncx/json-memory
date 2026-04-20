@@ -1,0 +1,28 @@
+{
+  "data": {
+    "user": {
+      "status": "inactive",
+      "skills": "Python, Go",
+      "languages": "Python, JavaScript, Rust",
+      "programming": "Python, Go, Rust, TypeScript",
+      "name": "Dion",
+      "programming_languages": "Python, Go, JavaScript",
+      "known_languages": "Python, TypeScript",
+      "state": "inactive",
+      "consolidated": "active, inactive"
+    },
+    "bot": {
+      "running": "no",
+      "status": "running"
+    },
+    "fact1": "value1",
+    "fact2": "value2",
+    "test": {
+      "fact": "value"
+    },
+    "server": {
+      "ip": "192.168.1.100"
+    }
+  },
+  "ttls": {}
+}
