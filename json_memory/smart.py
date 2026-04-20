@@ -146,6 +146,181 @@ def _keyword_relevance(fact_tokens: set[str], query_tokens: set[str],
     return min(score, 1.0)
 
 
+# ── Temporal Patterns ─────────────────────────────────────────────────
+
+TEMPORAL_PATTERNS = {
+    # Recent patterns (last X time units)
+    'recent': [
+        r'recent(?:ly)?',
+        r'lately',
+        r'just now',
+        r'new(?:ly)?',
+        r'fresh',
+        r'latest',
+        r'last (?:few |several )?(?:days?|weeks?|months?|hours?|minutes?)',
+    ],
+    # Past patterns (X ago, in the past)
+    'past': [
+        r'ago',
+        r'past',
+        r'before',
+        r'earlier',
+        r'previous',
+        r'last (?:week|month|year|time)',
+        r'(?:a |several |few )?(?:days?|weeks?|months?|years?) ago',
+    ],
+    # Old patterns (old, ancient, ancient)
+    'old': [
+        r'old(?:er)?',
+        r'ancient',
+        r'outdated',
+        r'stale',
+        r'forgotten',
+        r'long.?ago',
+        r'long.?time',
+    ],
+    # Future patterns (upcoming, soon, next)
+    'future': [
+        r'upcoming',
+        r'soon',
+        r'next',
+        r'future',
+        r'planned',
+        r'scheduled',
+    ],
+}
+
+# Time unit conversions (to seconds)
+TIME_UNITS = {
+    'second': 1,
+    'minute': 60,
+    'hour': 3600,
+    'day': 86400,
+    'week': 604800,
+    'month': 2592000,  # 30 days
+    'year': 31536000,  # 365 days
+}
+
+def _detect_temporal_intent(query: str) -> dict:
+    """Detect temporal intent in a query.
+    
+    Returns:
+        Dict with temporal intent: recent, past, old, future, or None
+        Also extracts time ranges if specified (e.g., "last 7 days")
+    """
+    if not query:
+        return {'intent': None, 'range_seconds': None}
+    
+    query_lower = query.lower()
+    
+    # Check for explicit time ranges first (e.g., "last 7 days", "past week")
+    import re
+    
+    # Pattern: "last/past X days/weeks/months"
+    range_patterns = [
+        (r'(?:last|past|previous)\s+(\d+)\s+(second|minute|hour|day|week|month|year)s?', 'past'),
+        (r'(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago', 'past'),
+        (r'(?:last|past|previous)\s+(second|minute|hour|day|week|month|year)', 'past'),
+        (r'in the (?:last|past|previous)\s+(\d+)\s+(second|minute|hour|day|week|month|year)s?', 'past'),
+        (r'in the (?:last|past|previous)\s+(second|minute|hour|day|week|month|year)', 'past'),
+    ]
+    
+    for pattern, intent in range_patterns:
+        match = re.search(pattern, query_lower)
+        if match:
+            groups = match.groups()
+            if len(groups) == 2:
+                try:
+                    count = int(groups[0])
+                    unit = groups[1].rstrip('s')  # Remove plural
+                    if unit in TIME_UNITS:
+                        range_seconds = count * TIME_UNITS[unit]
+                        return {'intent': intent, 'range_seconds': range_seconds}
+                except (ValueError, KeyError):
+                    pass
+            elif len(groups) == 1:
+                # Single group (e.g., "last week")
+                unit = groups[0].rstrip('s')
+                if unit in TIME_UNITS:
+                    range_seconds = TIME_UNITS[unit]
+                    return {'intent': intent, 'range_seconds': range_seconds}
+    
+    # Check for temporal keywords (but skip if we already matched a range pattern)
+    for intent, patterns in TEMPORAL_PATTERNS.items():
+        for pattern in patterns:
+            if re.search(pattern, query_lower):
+                # Default ranges for common patterns
+                if intent == 'recent':
+                    return {'intent': 'recent', 'range_seconds': 604800}  # Last 7 days
+                elif intent == 'past':
+                    return {'intent': 'past', 'range_seconds': 2592000}  # Last 30 days
+                elif intent == 'old':
+                    return {'intent': 'old', 'range_seconds': 7776000}  # Older than 90 days
+                elif intent == 'future':
+                    return {'intent': 'future', 'range_seconds': 2592000}  # Next 30 days
+    
+    return {'intent': None, 'range_seconds': None}
+
+def _temporal_score(meta, temporal_intent: dict, now: float) -> float:
+    """Calculate temporal relevance score based on intent.
+    
+    Args:
+        meta: PathMeta object with timestamps
+        temporal_intent: Dict from _detect_temporal_intent()
+        now: Current timestamp
+        
+    Returns:
+        Temporal score (0.0-1.0)
+    """
+    if not temporal_intent or temporal_intent['intent'] is None:
+        return 0.5  # Neutral score when no temporal intent
+    
+    intent = temporal_intent['intent']
+    range_seconds = temporal_intent['range_seconds']
+    
+    age_seconds = now - meta.created_at
+    recency_seconds = now - meta.last_accessed
+    
+    if intent == 'recent':
+        # Recent intent: prefer recently created or accessed facts
+        if range_seconds:
+            # Within specified range
+            if age_seconds <= range_seconds or recency_seconds <= range_seconds:
+                return 1.0
+            else:
+                return 0.0
+        else:
+            # General recent: exponential decay
+            return math.exp(-0.693 * age_seconds / 604800)  # 7-day half-life
+    
+    elif intent == 'past':
+        # Past intent: prefer facts from the specified time range
+        if range_seconds:
+            if age_seconds <= range_seconds:
+                return 1.0
+            else:
+                return 0.0
+        else:
+            # General past: prefer older facts (inverse of recent)
+            return 1.0 - math.exp(-0.693 * age_seconds / 2592000)  # 30-day half-life
+    
+    elif intent == 'old':
+        # Old intent: prefer older facts
+        if range_seconds:
+            if age_seconds >= range_seconds:
+                return 1.0
+            else:
+                return 0.0
+        else:
+            # General old: older = higher score
+            return min(age_seconds / 7776000, 1.0)  # Cap at 90 days
+    
+    elif intent == 'future':
+        # Future intent: neutral (can't predict future)
+        return 0.5
+    
+    return 0.5
+
 # ── Procedural Memory ─────────────────────────────────────────────────
 
 class Skill:
@@ -645,13 +820,15 @@ class SmartMemory:
 
     # ── Smart Retrieval ──────────────────────────────────────────────
 
-    def score(self, path: str, query_tokens: set[str] = None, now: float = None) -> float:
-        """Score a path's relevance. Combines recency × frequency × keyword match.
+    def score(self, path: str, query_tokens: set[str] = None, now: float = None,
+              temporal_intent: dict = None) -> float:
+        """Score a path's relevance. Combines recency × frequency × keyword match × temporal.
 
         Args:
             path: The dotted path to score.
             query_tokens: Token set from user's message (for keyword matching).
             now: Current timestamp (defaults to time.time()).
+            temporal_intent: Dict from _detect_temporal_intent() for time-based scoring.
 
         Returns:
             Float 0.0-1.0 relevance score.
@@ -682,18 +859,32 @@ class SmartMemory:
                             path_tokens.update(tokens)
                 keyword = _keyword_relevance(meta.tokens, query_tokens, path_tokens)
 
+        # Temporal score
+        temporal = _temporal_score(meta, temporal_intent, now)
+
         # Weighted combination
         if query_tokens:
             # With a query: keyword dominates, recency/frequency are tiebreakers
             if keyword > 0:
-                return 0.1 * recency + 0.05 * frequency + 0.85 * keyword
+                # Adjust weights based on temporal intent
+                if temporal_intent and temporal_intent['intent']:
+                    # Strong temporal intent: boost temporal score
+                    return (0.05 * recency + 0.05 * frequency + 0.70 * keyword + 0.20 * temporal)
+                else:
+                    # No temporal intent: original weights
+                    return 0.1 * recency + 0.05 * frequency + 0.85 * keyword
             else:
                 # No keyword match at all: suppress completely
                 # Recency/frequency without relevance is noise
                 return 0.0
         else:
-            # Without a query: recency + frequency only
-            return 0.6 * recency + 0.4 * frequency
+            # Without a query: recency + frequency + temporal
+            if temporal_intent and temporal_intent['intent']:
+                # Strong temporal intent: boost temporal score
+                return 0.3 * recency + 0.2 * frequency + 0.5 * temporal
+            else:
+                # No temporal intent: original weights
+                return 0.6 * recency + 0.4 * frequency
 
     def prompt_context(self, query: str = None, max_results: int = None,
                        format_fn=None) -> str:
@@ -939,10 +1130,13 @@ class SmartMemory:
         max_results = max_results or self.max_results
         now = time.time()
         query_tokens = _normalize_tokens(query) if query else set()
+        
+        # Detect temporal intent in query
+        temporal_intent = _detect_temporal_intent(query) if query else {'intent': None, 'range_seconds': None}
 
         scored = []
         for path in self.mem.paths():
-            s = self.score(path, query_tokens, now)
+            s = self.score(path, query_tokens, now, temporal_intent)
             scored.append((s, path, self._meta.get(path)))
 
         # Smart filtering: when query has strong matches, suppress noise

@@ -109,6 +109,21 @@ CONCEPT_MAP = {
     "automated": ["auto", "automatic", "automatically", "restart", "systemd", "service", "daemon"],
     "systemd": ["service", "daemon", "auto", "restart", "systemctl"],
     "daemon": ["service", "systemd", "auto", "background", "process"],
+    
+    # Temporal
+    "recent": ["new", "fresh", "latest", "current", "today", "yesterday"],
+    "recently": ["recent", "new", "fresh", "latest"],
+    "new": ["recent", "fresh", "latest", "current", "modern"],
+    "old": ["ancient", "outdated", "stale", "forgotten", "past", "previous"],
+    "past": ["old", "previous", "earlier", "before", "ago"],
+    "future": ["upcoming", "soon", "next", "planned", "scheduled"],
+    "soon": ["future", "upcoming", "next", "shortly"],
+    "before": ["past", "previous", "earlier", "ago"],
+    "after": ["future", "next", "following", "later"],
+    "now": ["current", "present", "today", "immediately"],
+    "then": ["past", "previous", "before", "ago"],
+    "when": ["time", "date", "moment", "period"],
+    "time": ["when", "date", "moment", "period", "hour", "day"],
 }
 
 
