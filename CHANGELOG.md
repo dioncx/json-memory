@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.9.0 — Temporal Awareness
+
+### Added
+- **Temporal awareness** — Now understands time-based queries:
+  - `recently`, `lately`, `just now`, `new`, `fresh`, `latest`
+  - `ago`, `past`, `before`, `earlier`, `previous`, `last week/month/year`
+  - `old`, `ancient`, `outdated`, `stale`, `forgotten`
+  - `upcoming`, `soon`, `next`, `future`, `planned`
+- **Explicit time ranges** — "last 7 days", "past week", "30 days ago"
+- **Time-based scoring** — Recent facts score higher for "recent" queries
+- **Temporal concept mappings** — Better semantic matching for time queries
+
+### Implementation
+- `_detect_temporal_intent()` — Extracts temporal intent and time ranges from queries
+- `_temporal_score()` — Calculates temporal relevance score (0.0-1.0)
+- Updated `score()` method to include temporal scoring (20% weight when temporal intent detected)
+- Updated `recall_relevant()` to detect and use temporal intent
+- Added temporal patterns: recent, past, old, future
+- Added time unit conversions (seconds, minutes, hours, days, weeks, months, years)
+- Added temporal concept mappings to concept_map.py
+
+### How It Works
+1. Query: "What did I learn recently?"
+2. Detect: `temporal_intent = {'intent': 'recent', 'range_seconds': 604800}`
+3. Score: Recent facts get `temporal_score = 1.0`, old facts get `0.0`
+4. Boost: Temporal score gets 20% weight when temporal intent detected
+5. Result: Recent facts ranked higher, old facts filtered out
+
+### Examples
+- "What did I learn recently?" → finds facts from last 7 days
+- "Show me facts from last week" → finds facts from last 7 days
+- "What old facts do I have?" → finds facts older than 90 days
+- "What's upcoming?" → neutral (can't predict future)
+
+### Tests
+- **19 new tests** for temporal awareness (all passing)
+- **Total tests**: 208 passing (was 189)
+
+
 ## v0.8.0 — Procedural Memory & Skill Transfer
 
 ### Revolutionary Addition
