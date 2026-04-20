@@ -73,6 +73,18 @@ def _normalize_tokens(text: str) -> set[str]:
         if token in synonyms:
             expanded.update(synonyms[token])
 
+    # Stem expansion — strip common suffixes for broader matching
+    # Handles cases like "professional" ↔ "profession", "trading" ↔ "trade"
+    stems = set()
+    suffixes = ['ial', 'ion', 'ing', 'ed', 'ly', 'ment', 'ness', 'able', 'ive', 'al', 'ic', 'ty']
+    for token in list(expanded):
+        for suffix in suffixes:
+            if token.endswith(suffix) and len(token) > len(suffix) + 2:
+                stem = token[:-len(suffix)]
+                if len(stem) >= 3:
+                    stems.add(stem)
+    expanded.update(stems)
+
     # Semantic expansion (concept map)
     expanded = expand_query_semantic(expanded)
 
