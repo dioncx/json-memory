@@ -149,16 +149,21 @@ def _keyword_relevance(fact_tokens: set[str], query_tokens: set[str],
 # ── Path Metadata ─────────────────────────────────────────────────────
 
 class PathMeta:
-    """Tracks per-path metadata for scoring."""
-    __slots__ = ['last_accessed', 'access_count', 'created_at', 'tier', 'tokens']
+    """Tracks per-path metadata for scoring and lifecycle management."""
+    __slots__ = ['last_accessed', 'access_count', 'created_at', 'tier', 'tokens', 
+                 'ttl', 'expires_at', 'archived', 'size_bytes']
 
-    def __init__(self):
+    def __init__(self, ttl: int = None):
         now = time.time()
         self.last_accessed = now
         self.access_count = 1
         self.created_at = now
         self.tier = 'hot'
         self.tokens: set[str] = set()
+        self.ttl = ttl  # Time-to-live in seconds (None = never expires)
+        self.expires_at = (now + ttl) if ttl else None
+        self.archived = False
+        self.size_bytes = 0
 
 
 class TieredMemory:
@@ -345,7 +350,7 @@ class SmartMemory:
         """
         with self._lock:
             self.mem.set(path, value, ttl=ttl)
-            self._init_meta(path, value)
+            self._init_meta(path, value, ttl=ttl)
 
             if self.tiered:
                 self.tiered.set(path, value, tier='hot', ttl=ttl)
@@ -863,15 +868,248 @@ class SmartMemory:
             'tier': meta.tier,
         }
 
+    # ── Memory Lifecycle & Pruning ────────────────────────────────────
+
+    def prune(self, max_age_seconds: int = None, min_access_count: int = None,
+              max_total_chars: int = None, dry_run: bool = False) -> dict:
+        """Remove expired, unused, or oversized memory entries.
+        
+        Args:
+            max_age_seconds: Remove facts older than this (None = no age limit)
+            min_access_count: Remove facts accessed fewer than this (None = no limit)
+            max_total_chars: If total memory exceeds this, remove oldest/least accessed
+            dry_run: If True, return what would be removed without actually removing
+            
+        Returns:
+            Dict with pruning statistics and removed paths
+        """
+        with self._lock:
+            now = time.time()
+            removed = []
+            expired = []
+            archived = []
+            
+            # 1. Remove expired facts (TTL exceeded)
+            for path in list(self._meta.keys()):
+                meta = self._meta[path]
+                if meta.expires_at and now > meta.expires_at:
+                    if not dry_run:
+                        self.mem.delete(path, prune=True)
+                        if self.tiered:
+                            self.tiered.hot.delete(path, prune=True)
+                            self.tiered.warm.delete(path, prune=True)
+                            self.tiered.cold.delete(path, prune=True)
+                        del self._meta[path]
+                    expired.append(path)
+            
+            # 2. Remove old facts (age-based pruning)
+            if max_age_seconds:
+                for path in list(self._meta.keys()):
+                    if path in expired:  # Skip already expired
+                        continue
+                    meta = self._meta[path]
+                    age = now - meta.created_at
+                    if age > max_age_seconds:
+                        if not dry_run:
+                            self.mem.delete(path, prune=True)
+                            if self.tiered:
+                                self.tiered.hot.delete(path, prune=True)
+                                self.tiered.warm.delete(path, prune=True)
+                                self.tiered.cold.delete(path, prune=True)
+                            del self._meta[path]
+                        removed.append(path)
+            
+            # 3. Remove rarely accessed facts (frequency-based pruning)
+            if min_access_count:
+                for path in list(self._meta.keys()):
+                    if path in expired or path in removed:  # Skip already processed
+                        continue
+                    meta = self._meta[path]
+                    if meta.access_count < min_access_count:
+                        if not dry_run:
+                            self.mem.delete(path, prune=True)
+                            if self.tiered:
+                                self.tiered.hot.delete(path, prune=True)
+                                self.tiered.warm.delete(path, prune=True)
+                                self.tiered.cold.delete(path, prune=True)
+                            del self._meta[path]
+                        removed.append(path)
+            
+            # 4. Size-based pruning (if total exceeds limit)
+            if max_total_chars:
+                total_chars = 0
+                for path in self.mem.paths():
+                    value = self.mem.get(path)
+                    if value:
+                        total_chars += len(str(value))
+                
+                if total_chars > max_total_chars:
+                    # Sort by score (oldest, least accessed first)
+                    paths_by_score = sorted(
+                        self._meta.items(),
+                        key=lambda x: (x[1].access_count, x[1].last_accessed)
+                    )
+                    
+                    chars_to_remove = total_chars - max_total_chars
+                    chars_removed = 0
+                    
+                    for path, meta in paths_by_score:
+                        if chars_removed >= chars_to_remove:
+                            break
+                        if path in expired or path in removed:
+                            continue
+                        
+                        value = self.mem.get(path)
+                        if value:
+                            value_chars = len(str(value))
+                            if not dry_run:
+                                self.mem.delete(path, prune=True)
+                                if self.tiered:
+                                    self.tiered.hot.delete(path, prune=True)
+                                    self.tiered.warm.delete(path, prune=True)
+                                    self.tiered.cold.delete(path, prune=True)
+                                del self._meta[path]
+                            removed.append(path)
+                            chars_removed += value_chars
+            
+            # 5. Archive old facts to cold storage (if tiered enabled)
+            if self.tiered:
+                for path in list(self._meta.keys()):
+                    if path in expired or path in removed:
+                        continue
+                    meta = self._meta[path]
+                    age = now - meta.last_accessed
+                    
+                    # Archive if not accessed in 7 days
+                    if age > 604800 and meta.tier != 'cold':
+                        if not dry_run:
+                            value = self.mem.get(path)
+                            if value:
+                                self.tiered.set(path, value, tier='cold')
+                                self.mem.delete(path, prune=True)
+                                self.tiered.hot.delete(path, prune=True)
+                                self.tiered.warm.delete(path, prune=True)
+                                meta.tier = 'cold'
+                                meta.archived = True
+                        archived.append(path)
+            
+            # Save metadata if changes were made
+            if not dry_run and (removed or expired or archived):
+                self._save_meta()
+            
+            return {
+                'removed': removed,
+                'expired': expired,
+                'archived': archived,
+                'total_removed': len(removed) + len(expired),
+                'total_archived': len(archived),
+                'dry_run': dry_run,
+            }
+
+    def archive(self, path: str) -> bool:
+        """Manually archive a fact to cold storage.
+        
+        Args:
+            path: Path to archive
+            
+        Returns:
+            True if archived, False if not found or already archived
+        """
+        with self._lock:
+            if path not in self._meta:
+                return False
+            
+            meta = self._meta[path]
+            if meta.archived:
+                return False
+            
+            value = self.mem.get(path)
+            if not value:
+                return False
+            
+            # Move to cold storage if tiered enabled
+            if self.tiered:
+                self.tiered.set(path, value, tier='cold')
+                self.mem.delete(path, prune=True)
+                meta.tier = 'cold'
+                meta.archived = True
+                self._save_meta()
+                return True
+            
+            return False
+
+    def lifecycle_stats(self) -> dict:
+        """Get memory lifecycle statistics.
+        
+        Returns:
+            Dict with memory health metrics
+        """
+        with self._lock:
+            now = time.time()
+            
+            if not self._meta:
+                return {
+                    'total_facts': 0,
+                    'total_chars': 0,
+                    'avg_age_seconds': 0,
+                    'expired_facts': 0,
+                    'archived_facts': 0,
+                    'hot_facts': 0,
+                    'warm_facts': 0,
+                    'cold_facts': 0,
+                    'memory_health': 'empty',
+                }
+            
+            total_facts = len(self._meta)
+            total_chars = sum(m.size_bytes for m in self._meta.values())
+            ages = [now - m.created_at for m in self._meta.values()]
+            avg_age = sum(ages) / len(ages) if ages else 0
+            
+            expired = sum(1 for m in self._meta.values() if m.expires_at and now > m.expires_at)
+            archived = sum(1 for m in self._meta.values() if m.archived)
+            
+            tier_counts = {'hot': 0, 'warm': 0, 'cold': 0}
+            for m in self._meta.values():
+                tier_counts[m.tier] = tier_counts.get(m.tier, 0) + 1
+            
+            # Memory health assessment
+            if expired > total_facts * 0.3:
+                health = 'critical'  # >30% expired
+            elif expired > total_facts * 0.1:
+                health = 'warning'   # >10% expired
+            elif avg_age > 2592000:  # >30 days average age
+                health = 'aging'
+            else:
+                health = 'healthy'
+            
+            return {
+                'total_facts': total_facts,
+                'total_chars': total_chars,
+                'avg_age_seconds': round(avg_age, 1),
+                'avg_age_days': round(avg_age / 86400, 1),
+                'expired_facts': expired,
+                'archived_facts': archived,
+                'hot_facts': tier_counts['hot'],
+                'warm_facts': tier_counts['warm'],
+                'cold_facts': tier_counts['cold'],
+                'memory_health': health,
+            }
+
     # ── Internal ─────────────────────────────────────────────────────
 
-    def _init_meta(self, path: str, value):
+    def _init_meta(self, path: str, value, ttl: int = None):
         """Initialize or update metadata for a path."""
         if path not in self._meta:
-            self._meta[path] = PathMeta()
+            self._meta[path] = PathMeta(ttl=ttl)
         meta = self._meta[path]
         meta.last_accessed = time.time()
         meta.tokens = self._extract_tokens(path, value)
+        
+        # Update size tracking
+        if isinstance(value, str):
+            meta.size_bytes = len(value.encode('utf-8'))
+        else:
+            meta.size_bytes = len(json.dumps(value, ensure_ascii=False).encode('utf-8'))
 
     def _touch(self, path: str):
         """Record access to a path."""
@@ -923,6 +1161,10 @@ class SmartMemory:
                     meta.created_at = data.get('created_at', 0)
                     meta.tier = data.get('tier', 'hot')
                     meta.tokens = set(data.get('tokens', []))
+                    meta.ttl = data.get('ttl', None)
+                    meta.expires_at = data.get('expires_at', None)
+                    meta.archived = data.get('archived', False)
+                    meta.size_bytes = data.get('size_bytes', 0)
                     self._meta[path] = meta
             except Exception:
                 pass
@@ -938,6 +1180,10 @@ class SmartMemory:
                     'created_at': meta.created_at,
                     'tier': meta.tier,
                     'tokens': sorted(meta.tokens),
+                    'ttl': meta.ttl,
+                    'expires_at': meta.expires_at,
+                    'archived': meta.archived,
+                    'size_bytes': meta.size_bytes,
                 }
             self._meta_path.parent.mkdir(parents=True, exist_ok=True)
             self._meta_path.write_text(json.dumps(raw, ensure_ascii=False), encoding='utf-8')
