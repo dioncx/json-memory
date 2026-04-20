@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.7.0 — Protected Facts & Tags
+
+### Critical Fix
+- **Protected facts** — Identity facts are now immune to pruning:
+  - `protected=True` flag on `remember()` prevents deletion by:
+    - Age-based pruning
+    - Frequency-based pruning
+    - Size-based pruning
+    - Archiving to cold storage
+  - Only TTL expiration can still remove protected facts
+  - Critical for: user.name, user.profession, user.skills, user.timezone, etc.
+
+### Added
+- **`tags` parameter** on `remember()` — categorize facts with labels
+  - Example: `mem.remember("user.name", "Dion", tags=["identity", "critical"])`
+  - Tags persist across save/load
+- **`skipped_protected` count** in `prune()` results
+- **8 new tests** for protected facts (all passing)
+
+### Usage
+```python
+# Identity facts — never delete these
+mem.remember("user.name", "Dion Christian", protected=True)
+mem.remember("user.profession", "Full-Stack Developer", protected=True)
+mem.remember("user.skills", "Python, Go, Trading Bots", protected=True, tags=["identity", "critical"])
+
+# Temporary facts — can be pruned
+mem.remember("session.temp", "temporary data", ttl=3600)
+mem.remember("cache.result", "cached value")  # Can be pruned by age/frequency
+```
+
+### Performance
+- **Total tests**: 172 passing (was 164)
+- **Critical safeguard** against accidental deletion of identity facts
+
+
 ## v0.6.0 — Memory Pruning & Lifecycle Management
 
 ### Added
