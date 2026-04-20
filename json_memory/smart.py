@@ -754,9 +754,11 @@ class ProceduralMemory:
 class PathMeta:
     """Tracks per-path metadata for scoring and lifecycle management."""
     __slots__ = ['last_accessed', 'access_count', 'created_at', 'tier', 'tokens', 
-                 'ttl', 'expires_at', 'archived', 'size_bytes', 'protected', 'tags']
+                 'ttl', 'expires_at', 'archived', 'size_bytes', 'protected', 'tags',
+                 'confidence']
 
-    def __init__(self, ttl: int = None, protected: bool = False, tags: list[str] = None):
+    def __init__(self, ttl: int = None, protected: bool = False, tags: list[str] = None,
+                 confidence: float = 1.0):
         now = time.time()
         self.last_accessed = now
         self.access_count = 1
@@ -769,6 +771,7 @@ class PathMeta:
         self.size_bytes = 0
         self.protected = protected  # Protected facts are immune to pruning
         self.tags = tags or []
+        self.confidence = confidence  # 0.0-1.0: how confident is this fact?
 
 
 class TieredMemory:
@@ -972,7 +975,8 @@ class SmartMemory:
     # ── Core Operations ──────────────────────────────────────────────
 
     def remember(self, path: str, value, ttl: int = None, tags: list[str] = None, 
-                 protected: bool = False, check_contradictions: bool = True) -> dict:
+                 protected: bool = False, check_contradictions: bool = True,
+                 confidence: float = 1.0) -> dict:
         """Store a fact. Use dotted paths: 'user.name', 'project.status'
 
         Args:
@@ -982,6 +986,9 @@ class SmartMemory:
             tags: Optional list of tags for categorization.
             protected: If True, fact is immune to pruning (for critical identity facts).
             check_contradictions: If True, check for contradictions before storing.
+            confidence: Confidence in this fact (0.0-1.0). Default 1.0 for explicit facts.
+                       Use lower values for auto-extracted or uncertain facts.
+                       Affects recall scoring — lower confidence = lower relevance.
 
         Returns:
             Dict with 'success' (bool), 'contradictions' (list), 'warnings' (list)
@@ -1015,7 +1022,8 @@ class SmartMemory:
             is_new = old_value is None
             
             self.mem.set(path, value, ttl=ttl)
-            self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags)
+            self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags,
+                            confidence=confidence)
 
             if self.tiered:
                 self.tiered.set(path, value, tier='hot', ttl=ttl)
@@ -1358,7 +1366,8 @@ class SmartMemory:
 
     def score(self, path: str, query_tokens: set[str] = None, now: float = None,
               temporal_intent: dict = None, negation_info: dict = None) -> float:
-        """Score a path's relevance. Combines recency × frequency × keyword match × temporal × negation.
+        """Score a path's relevance. Combines recency × frequency × keyword match
+           × temporal × negation × forgetting strength × confidence.
 
         Args:
             path: The dotted path to score.
@@ -1404,6 +1413,21 @@ class SmartMemory:
         if negation_info and negation_info['is_negated']:
             negation = _negation_score(meta, negation_info, query_tokens)
 
+        # Forgetting curve strength: decays over time unless reinforced
+        reinforcement_count = 0
+        if meta.tags:
+            reinforcement_count = meta.tags.count('reinforced')
+        strength = self.forgetting_curve.calculate_strength(
+            initial_strength=1.0,
+            last_reinforced=meta.last_accessed,
+            reinforcement_count=reinforcement_count,
+            memory_type='fact',
+            current_time=now
+        )
+
+        # Confidence: from meta (default 1.0 for explicit facts, <1.0 for auto-extracted)
+        confidence = meta.confidence
+
         # Weighted combination
         if query_tokens:
             # With a query: keyword dominates, recency/frequency are tiebreakers
@@ -1413,19 +1437,15 @@ class SmartMemory:
                 negation_weight = 0.20 if negation_info and negation_info['is_negated'] else 0.0
                 keyword_weight = 0.85 - temporal_weight - negation_weight
                 
-                return (0.1 * recency + 0.05 * frequency + 
-                        keyword_weight * keyword + 
-                        temporal_weight * temporal +
-                        negation_weight * negation)
+                base_score = (0.1 * recency + 0.05 * frequency + 
+                              keyword_weight * keyword + 
+                              temporal_weight * temporal +
+                              negation_weight * negation)
             else:
                 # No keyword match at all
-                # For negation queries, still consider negation scoring
                 if negation_info and negation_info['is_negated']:
-                    # Boost based on negation relevance
-                    return 0.1 * recency + 0.05 * frequency + 0.85 * negation
+                    base_score = 0.1 * recency + 0.05 * frequency + 0.85 * negation
                 else:
-                    # No keyword match and no negation: suppress completely
-                    # Recency/frequency without relevance is noise
                     return 0.0
         else:
             # Without a query: recency + frequency + temporal + negation
@@ -1433,9 +1453,12 @@ class SmartMemory:
             negation_weight = 0.5 if negation_info and negation_info['is_negated'] else 0.0
             remaining = 1.0 - temporal_weight - negation_weight
             
-            return (remaining * 0.6 * recency + remaining * 0.4 * frequency + 
-                    temporal_weight * temporal +
-                    negation_weight * negation)
+            base_score = (remaining * 0.6 * recency + remaining * 0.4 * frequency + 
+                          temporal_weight * temporal +
+                          negation_weight * negation)
+
+        # Apply forgetting curve and confidence as multiplicative factors
+        return base_score * strength * confidence
 
     def prompt_context(self, query: str = None, max_results: int = None,
                       max_tokens: int = None, chars_per_token: float = 4.0,
@@ -1533,7 +1556,8 @@ class SmartMemory:
                     # Store if not duplicate
                     existing = self.mem.get(path)
                     if existing != value:
-                        self.remember(path, value, tags=['auto_extracted'])
+                        self.remember(path, value, tags=['auto_extracted'],
+                                      confidence=confidence)
 
         # Auto-detect topic and log episode (passive — no manual call needed)
         topic = self._detect_topic(text)
@@ -1847,6 +1871,126 @@ class SmartMemory:
         """Restore state from snapshot."""
         self.mem.rollback(label)
         self._save_meta()
+
+    def merge_from(self, other, conflict_strategy: str = "keep_newer") -> dict:
+        """Merge another SmartMemory instance into this one.
+        
+        Transfers facts, metadata, and handles path conflicts.
+        Use this for combining agent memories across sessions or agents.
+        
+        Args:
+            other: Another SmartMemory instance (or dict of {path: value}).
+            conflict_strategy: What to do when both memories have the same path:
+                - "keep_newer": Keep the one with more recent last_accessed (default)
+                - "keep_other": Always use the other memory's version
+                - "keep_self": Skip conflicting paths, keep existing
+                - "keep_higher_confidence": Keep the one with higher confidence
+                - "merge_both": Store both as path and path._merged (tagged)
+                
+        Returns:
+            Dict with 'merged' (int), 'skipped' (int), 'conflicts' (list of paths),
+            'errors' (list).
+        """
+        result = {'merged': 0, 'skipped': 0, 'conflicts': [], 'errors': []}
+        
+        # Handle raw dict input
+        if isinstance(other, dict):
+            for path, value in other.items():
+                try:
+                    existing = self.mem.get(path)
+                    if existing is None:
+                        self.remember(path, value, tags=['merged'])
+                        result['merged'] += 1
+                    else:
+                        result['conflicts'].append(path)
+                        if conflict_strategy == "keep_other":
+                            self.remember(path, value, tags=['merged'])
+                            result['merged'] += 1
+                        elif conflict_strategy == "keep_self":
+                            result['skipped'] += 1
+                        else:
+                            # keep_newer / keep_higher_confidence: same as keep_other for raw dict
+                            self.remember(path, value, tags=['merged'])
+                            result['merged'] += 1
+                except Exception as e:
+                    result['errors'].append(f"{path}: {e}")
+            return result
+        
+        # Handle SmartMemory input
+        if not hasattr(other, 'mem') or not hasattr(other, '_meta'):
+            result['errors'].append("Input must be SmartMemory or dict")
+            return result
+        
+        with self._lock:
+            other_paths = other.mem.paths()
+            
+            for path in other_paths:
+                try:
+                    other_value = other.mem.get(path)
+                    if other_value is None:
+                        continue
+                    
+                    other_meta = other._meta.get(path)
+                    other_confidence = other_meta.confidence if other_meta else 1.0
+                    other_tags = (other_meta.tags if other_meta else []) + ['merged']
+                    other_protected = other_meta.protected if other_meta else False
+                    
+                    existing_value = self.mem.get(path)
+                    
+                    if existing_value is None:
+                        # No conflict — direct merge
+                        self.remember(path, other_value, 
+                                      tags=other_tags,
+                                      protected=other_protected,
+                                      confidence=other_confidence,
+                                      check_contradictions=False)
+                        result['merged'] += 1
+                    else:
+                        # Conflict
+                        result['conflicts'].append(path)
+                        self_meta = self._meta.get(path)
+                        
+                        if conflict_strategy == "keep_other":
+                            self.remember(path, other_value, tags=other_tags,
+                                          protected=other_protected,
+                                          confidence=other_confidence,
+                                          check_contradictions=False)
+                            result['merged'] += 1
+                        elif conflict_strategy == "keep_self":
+                            result['skipped'] += 1
+                        elif conflict_strategy == "keep_newer":
+                            other_time = other_meta.last_accessed if other_meta else 0
+                            self_time = self_meta.last_accessed if self_meta else 0
+                            if other_time > self_time:
+                                self.remember(path, other_value, tags=other_tags,
+                                              confidence=other_confidence,
+                                              check_contradictions=False)
+                                result['merged'] += 1
+                            else:
+                                result['skipped'] += 1
+                        elif conflict_strategy == "keep_higher_confidence":
+                            if other_confidence > (self_meta.confidence if self_meta else 1.0):
+                                self.remember(path, other_value, tags=other_tags,
+                                              confidence=other_confidence,
+                                              check_contradictions=False)
+                                result['merged'] += 1
+                            else:
+                                result['skipped'] += 1
+                        elif conflict_strategy == "merge_both":
+                            # Store other's version under a _merged suffix
+                            merged_path = f"{path}._merged"
+                            self.remember(merged_path, other_value, tags=other_tags,
+                                          confidence=other_confidence,
+                                          check_contradictions=False)
+                            result['merged'] += 1
+                        else:
+                            result['skipped'] += 1
+                except Exception as e:
+                    result['errors'].append(f"{path}: {e}")
+            
+            self._save_meta()
+        
+        return result
 
     # ── Stats & Debug ────────────────────────────────────────────────
 
@@ -2789,10 +2933,11 @@ class SmartMemory:
     # ── Internal ─────────────────────────────────────────────────────
 
     def _init_meta(self, path: str, value, ttl: int = None, protected: bool = False, 
-                   tags: list[str] = None):
+                   tags: list[str] = None, confidence: float = 1.0):
         """Initialize or update metadata for a path."""
         if path not in self._meta:
-            self._meta[path] = PathMeta(ttl=ttl, protected=protected, tags=tags)
+            self._meta[path] = PathMeta(ttl=ttl, protected=protected, tags=tags,
+                                         confidence=confidence)
         meta = self._meta[path]
         meta.last_accessed = time.time()
         meta.tokens = self._extract_tokens(path, value)
@@ -2859,6 +3004,7 @@ class SmartMemory:
                     meta.size_bytes = data.get('size_bytes', 0)
                     meta.protected = data.get('protected', False)
                     meta.tags = data.get('tags', [])
+                    meta.confidence = data.get('confidence', 1.0)
                     self._meta[path] = meta
             except Exception:
                 pass
@@ -2880,7 +3026,8 @@ class SmartMemory:
                     'size_bytes': meta.size_bytes,
                     'protected': meta.protected,
                     'tags': meta.tags,
-                }
+                    'confidence': meta.confidence,
+                },
             self._meta_path.parent.mkdir(parents=True, exist_ok=True)
             self._meta_path.write_text(json.dumps(raw, ensure_ascii=False), encoding='utf-8')
         except Exception:

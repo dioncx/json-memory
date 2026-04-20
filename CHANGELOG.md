@@ -1,5 +1,61 @@
 # Changelog
 
+## v1.7.0 — Intelligent Recall & Memory Merging
+
+### 🧠 Forgetting Curve Integrated into Recall
+Memory strength now decays over time, just like real memory. Old unreinforced facts naturally rank lower than fresh ones.
+
+- Forgetting curve `calculate_strength()` applied in `score()`
+- Facts accessed long ago score progressively lower (Ebbinghaus curve)
+- Accessing a fact "reinforces" it — resets decay
+- `reinforced` tag adds reinforcement count for extra strength
+
+### 🎯 Confidence-Aware Scoring
+Auto-extracted facts no longer pollute recall equally with authoritative facts.
+
+- `PathMeta` now tracks `confidence` (0.0-1.0)
+- `remember(confidence=0.6)` — explicitly set confidence
+- `process_conversation()` auto-sets confidence from extraction patterns
+- `score()` multiplies by confidence — low-confidence facts rank lower
+
+```python
+# Explicit fact — full confidence (default)
+sm.remember("user.name", "Alice")
+
+# Auto-extracted — lower confidence
+sm.remember("user.mood", "seems happy", confidence=0.6)
+
+# Confidence affects recall ranking
+# Higher confidence = higher relevance score
+```
+
+### 🔄 SmartMemory.merge_from()
+Combine agent memories across sessions, agents, or deployments.
+
+```python
+# Merge another SmartMemory
+result = agent_a.merge_from(agent_b, conflict_strategy="keep_newer")
+# → {'merged': 12, 'skipped': 3, 'conflicts': ['user.name'], 'errors': []}
+
+# Merge a raw dict
+agent.merge_from({"config.debug": True, "user.city": "Tokyo"})
+
+# Conflict strategies:
+# "keep_newer"           — most recent last_accessed wins (default)
+# "keep_other"           — always use other's version
+# "keep_self"            — always keep existing
+# "keep_higher_confidence" — higher confidence wins
+# "merge_both"           — store both (other as path._merged)
+```
+
+### Internal
+- `score()` now returns `base_score * strength * confidence`
+- `PathMeta.__slots__` includes `confidence`
+- `_init_meta()` accepts `confidence` parameter
+- Meta serialization saves/loads `confidence`
+
+---
+
 ## v1.6.0 — Budget Awareness & Token Control
 
 ### 🎯 Size Estimation (No More Blind Writes)
