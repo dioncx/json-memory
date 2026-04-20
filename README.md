@@ -180,6 +180,8 @@ simulation = mem.simulate_memory_decay("project.deadline", days=30)
 
 Tested against real agent memory (38 facts, 7 query types). See `examples/smart_memory_demo.py` to reproduce.
 
+**Comprehensive benchmark results:** [BENCHMARK_RESULTS.md](BENCHMARK_RESULTS.md)
+
 ---
 
 ## vs Alternatives
