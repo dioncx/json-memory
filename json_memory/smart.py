@@ -26,6 +26,7 @@ from .concept_map import expand_query_semantic, get_concept_category
 from .contradiction import detect_contradictions, Contradiction, ContradictionDetector
 from .consolidation import consolidate_memory, ConsolidationGroup
 from .forgetting import ForgettingCurve, MemoryStrength
+from .visualizer import MemoryVisualizer, visualize_memory
 
 
 # ── Auto-Extractor Patterns ───────────────────────────────────────────
@@ -1734,10 +1735,21 @@ class SmartMemory:
         top = self._top_scored(n=5)
         base['top_scored'] = top
 
-        if self.tiered:
-            base['tier_stats'] = self.tiered.stats()
-
         return base
+
+    def visualize(self, format: str = "full") -> str:
+        """Visualize memory structure and statistics.
+        
+        Args:
+            format: Format to use ('tree', 'stats', 'strength', 'contradictions', 
+                    'consolidation', 'timeline', 'full')
+        
+        Returns:
+            String representation of memory visualization
+        """
+        return visualize_memory(self, format)
+
+    # ── Private Helpers ────────────────────────────────────────────
 
     def explain_score(self, path: str, query: str = None) -> dict:
         """Debug: show how a path's score is calculated."""
