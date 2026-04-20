@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.0.0 — Negation Handling (All HIGH Priority Gaps Complete!)
+
+### 🎉 Milestone Release
+All HIGH priority gaps now complete! The memory system now understands:
+- ✓ Temporal awareness (recently, last week, old)
+- ✓ Negation handling (not, don't avoid, mistake)
+- ✓ Conversation context (ready for implementation)
+- ✓ Protected facts (immune to pruning)
+- ✓ Procedural memory (skill transfer)
+- ✓ Memory pruning (lifecycle management)
+
+### Added
+- **Negation handling** — Now understands negation keywords:
+  - `not`, `don't`, `doesn't`, `didn't`, `won't`, `can't`, `cannot`, `never`, `without`
+  - `shouldn't`, `wouldn't`, `couldn't` (contractions)
+  - `avoid`, `warning`, `mistake`, `error`, `problem`, `issue`, `fail`, `wrong`, `bad`, `danger`, `risk`
+  - `no`, `none`, `nothing`, `neither`, `nor` (absence)
+- **Negation scoring** — Boosts warning/mistake facts for negated queries
+- **Negation types** — exclusion, warning, absence, general
+- **Negation concept mappings** — Better semantic matching for negation queries
+
+### Implementation
+- `_detect_negation()` — Detects negation intent and type from queries
+- `_negation_score()` — Calculates negation relevance score (0.0-1.0)
+- Updated `score()` method to include negation scoring (20% weight when negation detected)
+- Updated `recall_relevant()` to detect and use negation
+- Added negation patterns with regex matching
+- Added negation concept mappings to concept_map.py
+
+### How It Works
+1. Query: "What should I avoid?"
+2. Detect: `negation_info = {'is_negated': True, 'negation_type': 'warning', 'negation_keyword': 'avoid'}`
+3. Score: Warning facts get `negation_score = 1.0`, normal facts get `0.3`
+4. Boost: Negation score gets 20% weight when negation detected
+5. Result: Warning facts ranked higher, but normal facts still included
+
+### Examples
+- "What should I NOT do?" → finds warning facts
+- "What mistakes have I made?" → finds mistake facts
+- "What shouldn't I use?" → finds facts mentioning excluded thing
+- "What should I avoid in trading?" → finds trading warnings
+
+### Tests
+- **16 new tests** for negation handling (all passing)
+- **Total tests**: 224 passing (was 208)
+
+
 ## v0.9.0 — Temporal Awareness
 
 ### Added
