@@ -894,6 +894,109 @@ class Memory:
             "utilization": f"{len(exported) / self.max_chars * 100:.1f}%",
         }
 
+    def estimate_size(self, value: Any) -> int:
+        """Estimate the JSON character size of a value.
+        
+        Args:
+            value: Any JSON-serializable value.
+            
+        Returns:
+            Estimated character count when serialized.
+        """
+        try:
+            return len(json.dumps(value, ensure_ascii=False, separators=(',', ':')))
+        except (TypeError, ValueError):
+            return len(str(value))
+
+    def available_budget(self) -> int:
+        """Return how many characters can still be written before overflow.
+        
+        Returns:
+            Number of characters remaining in the budget.
+        """
+        return self.max_chars - len(self.export())
+
+    def will_fit(self, path: str, value: Any) -> dict:
+        """Check if a value will fit at the given path without overflow.
+        
+        Simulates the write without committing. Accounts for:
+        - Current memory usage
+        - New value size
+        - Overwritten value size (if path exists)
+        - Intermediate dict overhead for new paths
+        
+        Args:
+            path: Dotted path where the value would be stored.
+            value: The value to check.
+            
+        Returns:
+            Dict with:
+            - 'fits' (bool): Whether the value fits in budget
+            - 'current_chars' (int): Current memory size
+            - 'new_chars' (int): Size after write
+            - 'delta' (int): Net change (+/-)
+            - 'available' (int): Current free space
+            - 'overflow_by' (int): How much over budget (0 if fits)
+            - 'eviction_needed' (int): How many chars need to be evicted (0 if fits)
+        """
+        current = self.export()
+        current_chars = len(current)
+        
+        # Simulate the write
+        snapshot = copy.deepcopy(self._data)
+        keys = path.split(".")
+        node = self._data
+        for key in keys[:-1]:
+            if key not in node or not isinstance(node[key], dict):
+                node[key] = {}
+            node = node[key]
+        node[keys[-1]] = value
+        self._invalidate()
+        
+        new_export = self.export()
+        new_chars = len(new_export)
+        
+        # Restore
+        self._data = snapshot
+        self._invalidate()
+        
+        delta = new_chars - current_chars
+        available = self.max_chars - current_chars
+        fits = new_chars <= self.max_chars
+        overflow_by = max(0, new_chars - self.max_chars)
+        
+        return {
+            'fits': fits,
+            'current_chars': current_chars,
+            'new_chars': new_chars,
+            'delta': delta,
+            'available': available,
+            'overflow_by': overflow_by,
+            'eviction_needed': overflow_by if not fits else 0,
+        }
+
+    def suggest_budget(self, target_facts: int = 50, avg_value_size: int = 80) -> dict:
+        """Suggest a max_chars budget based on desired capacity.
+        
+        Args:
+            target_facts: How many facts you want to store.
+            avg_value_size: Average value size in characters.
+            
+        Returns:
+            Dict with 'suggested_max_chars', 'estimated_facts', 'overhead'.
+        """
+        # Overhead: JSON structure, path separators, quotes, commas
+        overhead_per_fact = 30  # Conservative estimate for JSON structure
+        total = target_facts * (avg_value_size + overhead_per_fact)
+        
+        return {
+            'suggested_max_chars': total,
+            'target_facts': target_facts,
+            'avg_value_size': avg_value_size,
+            'overhead_per_fact': overhead_per_fact,
+            'total_estimated': total,
+        }
+
     # ── Dunder ────────────────────────────────────────────────────
 
     def __getitem__(self, path: str) -> Any:

@@ -1,5 +1,52 @@
 # Changelog
 
+## v1.6.0 — Budget Awareness & Token Control
+
+### 🎯 Size Estimation (No More Blind Writes)
+Know before you write. Every overflow is now predictable.
+
+- ✓ **will_fit(path, value)** — Dry-run check: fits? overflow? eviction needed?
+- ✓ **estimate_size(value)** — JSON character size of any value
+- ✓ **available_budget()** — Free space remaining
+- ✓ **suggest_budget(target_facts, avg_size)** — Plan your max_chars
+
+```python
+# Check before writing
+check = sm.will_fit("user.bio", long_text)
+if check['fits']:
+    sm.remember("user.bio", long_text)
+else:
+    print(f"Would overflow by {check['overflow_by']} chars")
+    print(f"Need to evict {check['eviction_needed']} chars")
+
+# Plan your budget
+plan = sm.suggest_budget(target_facts=100, avg_value_size=50)
+# → {'suggested_max_chars': 8000, ...}
+```
+
+### 🎯 Token-Aware Context Injection
+Stop wasting tokens. Budget your context in tokens, not characters.
+
+- ✓ **build_context(max_tokens=N)** — Token-bounded context builder
+- ✓ **prompt_context(max_tokens=N)** — Token-bounded fact injection
+- ✓ **estimate_tokens(text)** — Convert chars → estimated tokens
+- ✓ **chars_per_token** — Configurable ratio (4.0 default, 2.5-3.0 for CJK)
+
+```python
+# Fit memory injection into 100 tokens
+context = sm.build_context(query="trading strategy", max_tokens=100)
+
+# Or estimate how much space your memory uses
+tok = sm.estimate_tokens()
+print(f"Memory uses ~{tok['estimated_tokens']} tokens")
+```
+
+### Internal
+- Added `_chars_to_tokens()` and `_tokens_to_chars()` helper functions
+- SmartMemory wraps all new Memory methods
+
+---
+
 ## v1.5.0 — Cold Storage Completeness
 
 ### 🔧 Gap Fixes

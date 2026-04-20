@@ -1438,7 +1438,8 @@ class SmartMemory:
                     negation_weight * negation)
 
     def prompt_context(self, query: str = None, max_results: int = None,
-                       format_fn=None) -> str:
+                      max_tokens: int = None, chars_per_token: float = 4.0,
+                      format_fn=None) -> str:
         """Generate lean prompt context from relevant facts only.
 
         Instead of injecting the entire memory (wasting tokens), returns
@@ -1447,20 +1448,37 @@ class SmartMemory:
         Args:
             query: User's current message.
             max_results: Override default max results.
+            max_tokens: Token budget (overrides max_results if set).
+                        Converts to chars using chars_per_token ratio.
+            chars_per_token: Characters per token ratio. Default 4.0 (English).
+                             Use 2.5-3.0 for CJK, 3.5 for mixed.
             format_fn: Custom formatter (path, value) -> str.
 
         Returns:
             Formatted string ready for prompt injection.
         """
-        relevant = self.recall_relevant(query, max_results)
+        # Convert token budget to char budget
+        if max_tokens is not None:
+            char_budget = _tokens_to_chars(max_tokens, chars_per_token)
+            # Get more results than needed, then trim by budget
+            relevant = self.recall_relevant(query, max_results=max_results or 20)
+        else:
+            relevant = self.recall_relevant(query, max_results=max_results)
+        
         if not relevant:
             return ""
 
         lines = []
         formatter = format_fn or (lambda p, v: f"- {p}: {v}" if not isinstance(v, (list, dict)) else f"- {p}: {json.dumps(v, ensure_ascii=False)}")
-
+        
+        total_chars = len("## Memory\n")
         for path, value in relevant.items():
-            lines.append(formatter(path, value))
+            line = formatter(path, value)
+            if max_tokens is not None:
+                if total_chars + len(line) + 1 > char_budget:
+                    break
+                total_chars += len(line) + 1
+            lines.append(line)
 
         return "## Memory\n" + "\n".join(lines)
 
@@ -1745,6 +1763,7 @@ class SmartMemory:
     # ── Context Window Manager ───────────────────────────────────────
 
     def build_context(self, query: str = None, max_chars: int = 2000,
+                      max_tokens: int = None, chars_per_token: float = 4.0,
                       include_episodes: bool = True) -> str:
         """Build complete agent context: relevant facts + recent episodes.
 
@@ -1754,13 +1773,24 @@ class SmartMemory:
         Args:
             query: User's current message.
             max_chars: Character budget for the entire context block.
+                       Ignored if max_tokens is set.
+            max_tokens: Token budget (overrides max_chars).
+                        Converts to chars using chars_per_token ratio.
+            chars_per_token: Characters per token ratio. Default 4.0 (English).
+                             Use 2.5-3.0 for CJK, 3.5 for mixed.
             include_episodes: Include recent conversation episodes.
 
         Returns:
             Formatted context string ready for prompt injection.
         """
+        # Convert token budget to char budget
+        if max_tokens is not None:
+            budget = _tokens_to_chars(max_tokens, chars_per_token)
+        else:
+            budget = max_chars
+        
         parts = []
-        budget_remaining = max_chars
+        budget_remaining = budget
 
         # 1. Relevant facts (primary)
         relevant = self.recall_relevant(query, max_results=6, fallback=True)
@@ -1831,6 +1861,75 @@ class SmartMemory:
         base['top_scored'] = top
 
         return base
+
+    def estimate_size(self, value) -> int:
+        """Estimate the JSON character size of a value.
+        
+        Args:
+            value: Any JSON-serializable value.
+            
+        Returns:
+            Estimated character count when serialized.
+        """
+        return self.mem.estimate_size(value)
+
+    def available_budget(self) -> int:
+        """Return how many characters can still be written before overflow.
+        
+        Returns:
+            Number of characters remaining in the budget.
+        """
+        return self.mem.available_budget()
+
+    def will_fit(self, path: str, value) -> dict:
+        """Check if a value will fit at the given path without overflow.
+        
+        Simulates the write without committing. Use this before remember()
+        to know if eviction will happen.
+        
+        Args:
+            path: Dotted path where the value would be stored.
+            value: The value to check.
+            
+        Returns:
+            Dict with 'fits', 'current_chars', 'new_chars', 'delta',
+            'available', 'overflow_by', 'eviction_needed'.
+        """
+        return self.mem.will_fit(path, value)
+
+    def suggest_budget(self, target_facts: int = 50, avg_value_size: int = 80) -> dict:
+        """Suggest a max_chars budget based on desired capacity.
+        
+        Args:
+            target_facts: How many facts you want to store.
+            avg_value_size: Average value size in characters.
+            
+        Returns:
+            Dict with 'suggested_max_chars', 'estimated_facts', 'overhead'.
+        """
+        return self.mem.suggest_budget(target_facts, avg_value_size)
+
+    def estimate_tokens(self, text: str = None, chars_per_token: float = 4.0) -> dict:
+        """Estimate token count for text or entire memory.
+        
+        Args:
+            text: Specific text to estimate. If None, estimates for entire memory.
+            chars_per_token: Characters per token ratio. Default 4.0 (English).
+            
+        Returns:
+            Dict with 'chars', 'estimated_tokens', 'chars_per_token'.
+        """
+        if text is not None:
+            chars = len(text)
+        else:
+            chars = len(self.mem.export())
+        
+        return {
+            'chars': chars,
+            'estimated_tokens': _chars_to_tokens(chars, chars_per_token),
+            'chars_per_token': chars_per_token,
+            'context_tokens': _chars_to_tokens(chars, chars_per_token),
+        }
 
     def visualize(self, format: str = "full") -> str:
         """Visualize memory structure and statistics.
@@ -2843,3 +2942,30 @@ def _time_ago(timestamp: float) -> str:
     if seconds < 86400:
         return f"{int(seconds / 3600)}h ago"
     return f"{int(seconds / 86400)}d ago"
+
+
+def _chars_to_tokens(chars: int, ratio: float = 4.0) -> int:
+    """Estimate token count from character count.
+    
+    Args:
+        chars: Number of characters.
+        ratio: Characters per token. Default 4.0 (English average).
+               Use 2.5-3.0 for CJK, 3.5 for mixed content.
+    
+    Returns:
+        Estimated token count.
+    """
+    return int(chars / ratio)
+
+
+def _tokens_to_chars(tokens: int, ratio: float = 4.0) -> int:
+    """Convert token budget to character budget.
+    
+    Args:
+        tokens: Token budget.
+        ratio: Characters per token. Default 4.0 (English average).
+    
+    Returns:
+        Equivalent character count.
+    """
+    return int(tokens * ratio)

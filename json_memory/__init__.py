@@ -14,7 +14,7 @@ from .versioning import MemoryVersioning, MemoryDiff
 from .encryption import MemoryEncryption, EncryptedValue
 from .search import AdvancedSearch, SearchResult
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 __all__ = [
     "Memory", "Synapse", "Schema", "WeightGate",
     "SmartMemory", "TieredMemory",
