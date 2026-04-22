@@ -1,5 +1,35 @@
 # Changelog
 
+## v1.9.1 — Gap Fixes: Protected Eviction, Size Guard, Health
+
+### 🔒 Protected Entry Eviction Fix
+Memory could evict `user.*` identity facts even though they were marked `protected=True`. The LRU eviction loop never checked the flag.
+
+**Fix:** Added `Memory.protected_paths` set + `mark_protected()` method. Eviction loop now skips protected entries. `SmartMemory.remember()` auto-protects `user.*` paths and re-marks them on startup from disk.
+
+### 📏 Size Guard for Large Values
+`remember()` with huge values (>5K chars) would fail unpredictably — sometimes truncating, sometimes raising generic overflow errors mid-write.
+
+**Fix:** Pre-flight JSON size check before `set()`:
+- >2000 chars → warning in result
+- >5000 chars → raises `ValueError` immediately with clear message
+
+### 🩺 Health Diagnostics
+No visibility into memory health — budget utilization, tier distribution, or eviction risk.
+
+**Fix:** New `SmartMemory.health()` method:
+```python
+{
+  'budget_utilization_pct': 12.3,
+  'protected_count': 3,
+  'protected_paths': ['user.name', ...],
+  'tier_breakdown': {...},
+  'eviction_risk_paths': [...],
+  'meta_entries': 142,
+  'timestamp': ...
+}
+```
+
 ## v1.9.0 — Structural Operations & Search
 
 ### 🔍 search_value() — Search by value content
