@@ -62,6 +62,7 @@ class Memory:
         self._ttls: dict[str, float] = {}  # full_path -> expires_at
         self._snapshots: dict[str, dict] = {}
         self._access_times: dict[str, float] = {}
+        self.protected_paths: set[str] = set()  # Patched: tracks protected entries
         
         # Auto-configure adapter if path is given but no adapter provided
         if self.auto_flush_path and not self.storage_adapter:
@@ -117,6 +118,10 @@ class Memory:
         self._cache = None
 
     # ── Core Access ───────────────────────────────────────────────
+    def mark_protected(self, path: str) -> None:
+        """Mark a path as protected from LRU eviction."""
+        self.protected_paths.add(path)
+
 
     def get(self, path: str, default: Any = None) -> Any:
         """Get a value by dotted path. Returns default if not found."""
@@ -260,6 +265,9 @@ class Memory:
                     sorted_paths = sorted(all_paths, key=lambda p: self._access_times.get(p, 0))
                     
                     for p in sorted_paths:
+                        if p in self.protected_paths:
+                            continue  # Skip protected entry
+
                         if len(self.export()) <= self.max_chars:
                             break
                         evicted_value = self.get(p)

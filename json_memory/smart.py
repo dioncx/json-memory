@@ -1,3 +1,5 @@
+import json
+import time
 """
 SmartMemory — Intelligent memory layer for AI agents.
 
@@ -972,6 +974,14 @@ class SmartMemory:
         for p in self.mem.paths():
             if p not in self._meta:
                 self._init_meta(p, self.mem.get(p))
+        # Re-mark protected entries in the underlying Memory after loading meta from disk
+        for p, meta in self._meta.items():
+            if getattr(meta, 'protected', False):
+                try:
+                    self.mem.mark_protected(p)
+                except Exception:
+                    pass  # Memory may not support mark_protected if old version
+
 
     # ── Core Operations ──────────────────────────────────────────────
 
@@ -1039,9 +1049,20 @@ class SmartMemory:
                     if path in self._meta:
                         self._meta[path].overwrite_count += 1
             
+            # Size guard — warn if value is huge (patch: gap fix)
+            value_str = json.dumps(value, ensure_ascii=False, default=str)
+            if len(value_str) > 2000:
+                result['warnings'].append(f"Value size {len(value_str)} chars exceeds 2000 — may impact context budget")
+                if len(value_str) > 5000:
+                    raise ValueError(f"Value too large ({len(value_str)} chars) — max 5000")
             self.mem.set(path, value, ttl=ttl)
+            # Auto-protect user.* identity facts (patch: json-memory gap fix)
+            if not protected and path.startswith('user.'):
+                protected = True
             self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags,
                             confidence=confidence)
+            if protected:
+                self.mem.mark_protected(path)
 
             if self.tiered:
                 self.tiered.set(path, value, tier='hot', ttl=ttl)
@@ -2233,6 +2254,59 @@ class SmartMemory:
         base['top_scored'] = top
 
         return base
+
+    def health(self) -> dict:
+        """Diagnostic snapshot of memory health.
+        
+        Returns keys:
+          - budget_utilization_pct: % of max_chars used
+          - hot_size_chars / max_hot_chars
+          - protected_count: number of protected entries
+          - tier_breakdown: counts per tier
+          - eviction_risk_paths: list of paths likely to be evicted soon
+        """
+        with self._lock:
+            total_chars = len(self.mem.export())
+            budget_pct = (total_chars / self.max_chars) * 100 if self.max_chars else 0
+            
+            # Tier breakdown if tiered
+            tier_info = {}
+            if self.tiered:
+                tier_info['hot'] = {
+                    'count': len(self.tiered.hot._data),
+                    'chars': len(self.tiered.hot.export()),
+                    'max': self.tiered.max_hot_chars,
+                }
+                tier_info['warm'] = {
+                    'count': len(self.tiered.warm._data),
+                    'chars': len(self.tiered.warm.export()),
+                    'max': self.tiered.max_warm_chars,
+                }
+                cold_data = self.tiered.cold._data
+                tier_info['cold'] = {
+                    'count': len(cold_data),
+                    'chars': len(self.tiered.cold.export()),
+                }
+            
+            protected_paths = [p for p, meta in self._meta.items() if getattr(meta, 'protected', False)]
+            
+            # Estimate eviction risk (oldest accessed non-protected)
+            at_risk = []
+            for path, meta in sorted(self._meta.items(), key=lambda x: x[1].last_accessed)[:10]:
+                if not getattr(meta, 'protected', False):
+                    at_risk.append({'path': path, 'last_accessed': meta.last_accessed, 'access_count': meta.access_count})
+            
+            return {
+                'budget_chars': total_chars,
+                'max_chars': self.max_chars,
+                'budget_utilization_pct': round(budget_pct, 1),
+                'protected_count': len(protected_paths),
+                'protected_paths': protected_paths[:20],
+                'tier_breakdown': tier_info,
+                'eviction_risk_paths': at_risk,
+                'meta_entries': len(self._meta),
+                'timestamp': time.time(),
+            }
 
     def estimate_size(self, value) -> int:
         """Estimate the JSON character size of a value.
