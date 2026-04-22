@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools==68.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -11,7 +11,7 @@ requires-python = ">=3.9"
 authors = [
     {name = "Dion Christian", email = "dion.christiann@gmail.com"}
 ]
-license = {text = "MIT"}
+    license = {text = "MIT"}
 keywords = ["ai", "agent", "memory", "compression", "json", "llm", "context"]
 classifiers = [
     "Development Status :: 3 - Alpha",
