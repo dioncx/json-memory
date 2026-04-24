@@ -1,5 +1,11 @@
 # json-memory
 
+[![PyPI version](https://badge.fury.io/py/json-memory.svg)](https://pypi.org/project/json-memory/)
+[![PyPI downloads](https://static.pepy.tech/badge/json-memory)](https://pepy.tech/project/json-memory)
+[![Python versions](https://img.shields.io/pypi/pyversions/json-memory.svg)](https://pypi.org/project/json-memory/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)]()
+
 **Structured memory for AI agents** — store, retrieve, and navigate agent memory without wasting tokens.
 
 ```bash
@@ -7,6 +13,24 @@ pip install json-memory
 ```
 
 Zero dependencies. Pure Python. Works with any LLM.
+
+---
+
+## 📋 Table of Contents
+
+- [What problem does this solve?](#what-problem-does-this-solve)
+- [Quick Start](#quick-start)
+- [Show me it works](#show-me-it-works)
+- [How it works](#how-it-works)
+- [Benchmarks](#benchmarks)
+- [vs Alternatives](#vs-alternatives)
+- [Who is this for?](#who-is-this-for)
+- [Installation](#installation)
+- [Works with](#works-with)
+- [Examples](#examples)
+- [API (Quick Reference)](#api-quick-reference)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
@@ -23,6 +47,33 @@ AI agents remember things as prose — a wall of text injected into every prompt
 **~500 tokens** for basic user info. Injected every single turn. Even when the user only asked about their timezone.
 
 json-memory fixes this.
+
+---
+
+## 🚀 Quick Start
+
+```python
+from json_memory import SmartMemory
+
+# 1. Create memory (auto-saves to disk)
+mem = SmartMemory("agent.json", max_chars=5000)
+
+# 2. Remember facts
+mem.remember("user.name", "Alice")
+mem.remember("user.timezone", "GMT+7")
+
+# 3. Retrieve what's relevant (not everything)
+mem.recall_relevant("What time is it?")
+# → {"user.timezone": "GMT+7"}
+
+# 4. Inject into LLM prompt
+mem.prompt_context("What time is it?")
+# → "## Memory\n- user.timezone: GMT+7"
+```
+
+**Result:** 92% fewer tokens vs prose memory. 4 lines to replace your wall-of-text system prompt.
+
+---
 
 ## Show me it works
 
