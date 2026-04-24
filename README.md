@@ -5,6 +5,7 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/json-memory.svg)](https://pypi.org/project/json-memory/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen.svg)]()
+[![GitHub Sponsors](https://img.shields.io/badge/Sponsor-GitHub%20Sponsors-ff69b4.svg)](https://github.com/sponsors/dioncx)
 
 **Structured memory for AI agents** — store, retrieve, and navigate agent memory without wasting tokens.
 

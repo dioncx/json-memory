@@ -25,6 +25,7 @@ classifiers = [
 Homepage = "https://github.com/dioncx/json-memory"
 Repository = "https://github.com/dioncx/json-memory"
 Issues = "https://github.com/dioncx/json-memory/issues"
+"Sponsor — GitHub Sponsors" = "https://github.com/sponsors/dioncx"
 
 [project.optional-dependencies]
 stem = ["snowballstemmer>=2.0"]  # Porter2 stemmer for better word matching (~200KB)
