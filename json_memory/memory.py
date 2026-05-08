@@ -79,8 +79,7 @@ class Memory:
         # Initial access tracking for existing data
         if self._data:
             with self._lock:
-                for path in self.paths():
-                    self._track_access(path)
+                self._track_all_access(self._data)
 
     def watch(self, path: str, callback: Callable[[str, Any], None], exact: bool = False) -> "Memory":
         """Register a callback triggered when path (or sub-path) is modified."""
@@ -1211,6 +1210,18 @@ class Memory:
             else:
                 redacted[k] = v
         return redacted
+
+    def _track_all_access(self, node: Any, prefix: str = ""):
+        """Internal: recursively track access for a node and all descendants in a single pass."""
+        now = time.time()
+        def _track(n, p):
+            if p:
+                self._access_times[p] = now
+            if isinstance(n, dict):
+                for k, v in n.items():
+                    child = f"{p}.{k}" if p else k
+                    _track(v, child)
+        _track(node, prefix)
 
     def _track_access(self, path: str):
         """Internal: record access time for a path and its parents."""
