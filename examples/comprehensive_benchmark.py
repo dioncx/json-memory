@@ -32,7 +32,7 @@ class LegacyProseMemory:
     
     def recall_relevant(self, query):
         """Legacy: just return everything."""
-        return self.full_text
+        return self.export()
     
     def prompt_context(self, query):
         """Legacy: inject everything."""
