@@ -214,8 +214,7 @@ class Memory:
             q = query if case_sensitive else query.lower()
             matches = {}
 
-            for path in self.paths():
-                value = self.get(path)
+            for path, value in self.items():
                 if value is None:
                     continue
 
@@ -1222,19 +1221,42 @@ class Memory:
             current = f"{current}.{key}" if current else key
             self._access_times[current] = now
 
+    def _paths_recursive(self, current_node: Any, current_prefix: str, results: list) -> None:
+        """Internal: recursively collect leaf paths."""
+        if isinstance(current_node, dict):
+            for k, v in current_node.items():
+                full_path = f"{current_prefix}.{k}" if current_prefix else k
+                if isinstance(v, dict):
+                    self._paths_recursive(v, full_path, results)
+                else:
+                    results.append(full_path)
+
+    def _items_recursive(self, current_node: Any, current_prefix: str, results: list) -> None:
+        """Internal: recursively collect leaf (path, value) tuples."""
+        if isinstance(current_node, dict):
+            for k, v in current_node.items():
+                full_path = f"{current_prefix}.{k}" if current_prefix else k
+                if isinstance(v, dict):
+                    self._items_recursive(v, full_path, results)
+                else:
+                    results.append((full_path, v))
+
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""
         with self._lock:
             results = []
             node = self.get(prefix) if prefix else self._data
-            if isinstance(node, dict):
-                for key, value in node.items():
-                    full_path = f"{prefix}.{key}" if prefix else key
-                    if isinstance(value, dict):
-                        results.extend(self.paths(full_path))
-                    else:
-                        results.append(full_path)
+            self._paths_recursive(node, prefix, results)
             return sorted(results)
+
+    def items(self, prefix: str = "") -> list:
+        """List all leaf (path, value) tuples in the memory tree."""
+        with self._lock:
+            results = []
+            node = self.get(prefix) if prefix else self._data
+            self._items_recursive(node, prefix, results)
+            # Sort by path for consistency with paths()
+            return sorted(results, key=lambda x: x[0])
 
     def history(self) -> list[dict]:
         """Return a copy of the mutation audit log."""
