@@ -1049,14 +1049,14 @@ class SmartMemory:
                     if path in self._meta:
                         self._meta[path].overwrite_count += 1
             
-            # Size guard — warn if value is huge (patch: gap fix)
+            # Size guard — warn if value is huge
             value_str = json.dumps(value, ensure_ascii=False, default=str)
             if len(value_str) > 2000:
                 result['warnings'].append(f"Value size {len(value_str)} chars exceeds 2000 — may impact context budget")
                 if len(value_str) > 5000:
                     raise ValueError(f"Value too large ({len(value_str)} chars) — max 5000")
             self.mem.set(path, value, ttl=ttl)
-            # Auto-protect user.* identity facts (patch: json-memory gap fix)
+            # Auto-protect user.* identity facts
             if not protected and path.startswith('user.'):
                 protected = True
             self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags,
