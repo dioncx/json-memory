@@ -93,7 +93,7 @@ def main():
 
     for user_msg, agent_msg in conversations:
         extracted = mem.process_conversation(user_msg, agent_msg)
-        print(f"\n  User: \"{user_msg}\"")
+        print(f'\n  User: "{user_msg}"')
         for ext in extracted:
             print(f"     → {ext['path']}: {ext['value']} (confidence: {ext['confidence']:.0%})")
 

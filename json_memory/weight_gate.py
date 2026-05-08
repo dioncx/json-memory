@@ -48,6 +48,7 @@ from .synapse import Synapse
 # ── Optional: snowballstemmer (Porter2 algorithm, ~200KB) ───────────
 try:
     import snowballstemmer as _snowball
+
     _SNOWBALL = _snowball.stemmer("english")
     HAS_SNOWBALL = True
 except ImportError:
@@ -88,7 +89,6 @@ def _build_root_map() -> dict[str, str]:
         ("solut", "solution", "solutions"),
         ("transact", "transaction", "transactions"),
         ("transform", "transformation", "transforming", "transformed"),
-
         # -ment family
         ("deploy", "deployment", "deployments", "deploying", "deployed"),
         ("develop", "development", "developing", "developed"),
@@ -97,14 +97,12 @@ def _build_root_map() -> dict[str, str]:
         ("require", "requirement", "requirements", "requiring", "required"),
         ("replace", "replacement", "replacing", "replaced"),
         ("state", "statement", "statements"),
-
         # -ness / -ity family
         ("ready", "readiness"),
         ("happi", "happiness", "happy"),
         ("effectiv", "effectiveness", "effective", "effectively"),
         ("activ", "activity", "activities", "active", "actively"),
         ("respons", "responsibility", "responsible", "response", "responses"),
-
         # -ly family
         ("quick", "quickly"),
         ("basic", "basically"),
@@ -112,9 +110,16 @@ def _build_root_map() -> dict[str, str]:
         ("specif", "specific", "specifically", "specification", "specifications"),
         ("automat", "automatic", "automatically", "automation", "automate", "automated"),
         ("probabl", "probably", "probability"),
-        ("gener", "general", "generally", "generate", "generating", "generated",
-         "generator", "generators"),
-
+        (
+            "gener",
+            "general",
+            "generally",
+            "generate",
+            "generating",
+            "generated",
+            "generator",
+            "generators",
+        ),
         # -ing / -ed family (irregular cases)
         ("debug", "debugging", "debugged", "debugger"),
         ("run", "running", "runner", "ran", "runs"),
@@ -134,7 +139,6 @@ def _build_root_map() -> dict[str, str]:
         ("delet", "deleting", "deleted", "deletion"),
         ("updat", "updating", "updated", "updates"),
         ("creati", "creating", "created", "creation", "creative"),
-
         # Irregular verbs (Porter can't handle these)
         ("run", "running", "runner", "ran", "runs"),
         ("break", "breaking", "broken", "breaks", "broke"),
@@ -155,7 +159,6 @@ def _build_root_map() -> dict[str, str]:
         ("drive", "driving", "driven", "drove", "drives"),
         ("read", "reading", "reads"),
         ("com", "coming", "came", "comes"),
-
         # -s / plural / common technical terms
         ("bot", "bots"),
         ("token", "tokens"),
@@ -219,27 +222,27 @@ _COMMON_ROOTS = _build_root_map()
 
 _SUFFIX_RULES = [
     # ≥6 chars — very safe, almost never false-match
-    ("ational", "ate"),    # operational → operate
-    ("fulness", "ful"),    # helpfulness → helpful
-    ("ousness", "ous"),    # dangerousness → dangerous
-    ("iveness", "ive"),    # effectiveness → effective
-    ("lessly", "less"),    # endlessly → endless
-    ("ically", "ic"),      # technically → technic
+    ("ational", "ate"),  # operational → operate
+    ("fulness", "ful"),  # helpfulness → helpful
+    ("ousness", "ous"),  # dangerousness → dangerous
+    ("iveness", "ive"),  # effectiveness → effective
+    ("lessly", "less"),  # endlessly → endless
+    ("ically", "ic"),  # technically → technic
     # 5 chars — safe
-    ("tional", "te"),      # functional → functe
-    ("ously", "ous"),      # dangerously → dangerous
-    ("ively", "ive"),      # effectively → effective
-    ("ality", "al"),       # functionality → functional
-    ("ities", "ity"),      # activities → activity
-    ("ments", "ment"),     # deployments → deployment
-    ("ally", "al"),        # technically → technical
+    ("tional", "te"),  # functional → functe
+    ("ously", "ous"),  # dangerously → dangerous
+    ("ively", "ive"),  # effectively → effective
+    ("ality", "al"),  # functionality → functional
+    ("ities", "ity"),  # activities → activity
+    ("ments", "ment"),  # deployments → deployment
+    ("ally", "al"),  # technically → technical
     # 4 chars — productive derivational suffixes
-    ("ness", ""),          # readiness → ready
-    ("tion", ""),          # configuration → configura
-    ("sion", ""),          # compression → compres
-    ("ment", ""),          # deployment → deploy
-    ("ies", "y"),          # strategies → strategy
-    ("ied", "y"),          # modified → modify
+    ("ness", ""),  # readiness → ready
+    ("tion", ""),  # configuration → configura
+    ("sion", ""),  # compression → compres
+    ("ment", ""),  # deployment → deploy
+    ("ies", "y"),  # strategies → strategy
+    ("ied", "y"),  # modified → modify
     # Deliberately REMOVED (too short, high false-positive rate):
     #   ing, ed, er, es, al, en, s, ent, ant, ive, ly, ful, est, ers
     # Dictionary + snowball handle these cases.
@@ -276,13 +279,11 @@ def _candidates(word: str) -> set[str]:
     # Layer 3: Suffix rules — built-in fallback
     for suffix, replacement in _SUFFIX_RULES:
         if word.endswith(suffix):
-            stem = word[:-len(suffix)] + replacement
+            stem = word[: -len(suffix)] + replacement
             if len(stem) >= 3:
                 result.add(stem)
                 # Handle consonant doubling: debugg → debug, runn → run
-                if (len(stem) >= 4
-                        and stem[-1] == stem[-2]
-                        and stem[-1] not in 'aeiou'):
+                if len(stem) >= 4 and stem[-1] == stem[-2] and stem[-1] not in "aeiou":
                     result.add(stem[:-1])
 
     return result
@@ -290,19 +291,19 @@ def _candidates(word: str) -> set[str]:
 
 def _tokenize(text: str, ngram_size: int = 1) -> set[str]:
     """Extract all word forms and n-grams from text as a flat set of candidates."""
-    words = re.findall(r'\b\w+\b', text.lower())
+    words = re.findall(r"\b\w+\b", text.lower())
     all_forms = set()
-    
+
     # 1. Unigrams + Stems
     for word in words:
         all_forms.update(_candidates(word))
-        
+
     # 2. N-grams (bi-grams, tri-grams, etc.)
     for n in range(2, ngram_size + 1):
         for i in range(len(words) - n + 1):
-            ngram = " ".join(words[i:i + n])
+            ngram = " ".join(words[i : i + n])
             all_forms.add(ngram)
-            
+
     return all_forms
 
 
@@ -313,19 +314,19 @@ def _matches_term(tokens: set[str], term: str, cache: dict[str, set[str]] = None
     For multi-word: checks if the exact phrase exists in the token n-grams.
     """
     term_lower = term.lower().replace("_", " ")
-    
+
     if " " in term_lower:
-        # Multi-word concept: 
+        # Multi-word concept:
         # 1. Try exact n-gram match (highest accuracy)
         if term_lower in tokens:
             return True
-        # 2. Fallback: if all words are present AND either ngram_size=1 
+        # 2. Fallback: if all words are present AND either ngram_size=1
         #    or we want flexible matching. This restores old behavior.
         parts = term_lower.split()
         part_candidates = []
         for p in parts:
             part_candidates.append(_candidates(p))
-            
+
         return all(any(c in tokens for c in cand_set) for cand_set in part_candidates)
 
     # Single-word concept: check stem overlap
@@ -364,10 +365,16 @@ class WeightGate:
         [('cappuccino', 0.95), ('americano', 0.29)]
     """
 
-    def __init__(self, path: str = None, synapse: Synapse = None,
-                 decay_rate: float = 0.01, boost_rate: float = 0.05,
-                 min_weight: float = 0.1, enabled: bool = False,
-                 ngram_size: int = 1):
+    def __init__(
+        self,
+        path: str = None,
+        synapse: Synapse = None,
+        decay_rate: float = 0.01,
+        boost_rate: float = 0.05,
+        min_weight: float = 0.1,
+        enabled: bool = False,
+        ngram_size: int = 1,
+    ):
         if path is not None and synapse is not None:
             raise ValueError("Provide either 'path' or 'synapse', not both")
         if path is None and synapse is None:
@@ -488,8 +495,6 @@ class WeightGate:
         self._save()
         return detected
 
-
-
     def process_output(self, text: str) -> dict:
         """Process agent output — strengthen concepts that were actually used.
 
@@ -507,12 +512,8 @@ class WeightGate:
                 if assoc.startswith("_"):
                     continue
                 if _matches_term(tokens, assoc, self._term_token_cache):
-                    new_w = self._synapse.strengthen(
-                        concept, assoc, self.boost_rate * 0.5
-                    )
-                    strengthened.setdefault(concept, []).append(
-                        f"{assoc}→{new_w:.2f}"
-                    )
+                    new_w = self._synapse.strengthen(concept, assoc, self.boost_rate * 0.5)
+                    strengthened.setdefault(concept, []).append(f"{assoc}→{new_w:.2f}")
 
         self._save()
         return strengthened
@@ -606,5 +607,7 @@ class WeightGate:
     def __repr__(self):
         state = "ON" if self._enabled else "OFF"
         stats = self.get_stats()
-        return (f"WeightGate([{state}] concepts={stats['concepts']}, "
-                f"interactions={stats['interactions']})")
+        return (
+            f"WeightGate([{state}] concepts={stats['concepts']}, "
+            f"interactions={stats['interactions']})"
+        )

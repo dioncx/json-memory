@@ -109,13 +109,14 @@ if __name__ == "__main__":
     # ── Associative Memory ──
     memory.link("debugging", ["check_logs", "reproduce", "git_bisect", "ask_user"])
     memory.link("deploy", ["test", "build", "push", "verify"])
-    memory.link("debugging", ["check_logs", "reproduce"],
-                weights={"check_logs": 0.9, "reproduce": 0.7})
+    memory.link(
+        "debugging", ["check_logs", "reproduce"], weights={"check_logs": 0.9, "reproduce": 0.7}
+    )
 
     # ── Recall ──
-    print(f"User: {memory.recall('user.name')}")          # → "Alice"
+    print(f"User: {memory.recall('user.name')}")  # → "Alice"
     print(f"Task: {memory.recall('session.current_task')}")  # → "reviewing PR #42"
-    print(f"Token: {memory.recall('session.temp_token')}")   # → "xyz_123" (for 5 min)
+    print(f"Token: {memory.recall('session.temp_token')}")  # → "xyz_123" (for 5 min)
 
     # ── Associative Recall ──
     print(f"When debugging, first: {memory.associate('debugging')}")

@@ -16,6 +16,7 @@ try:
     from sentence_transformers import SentenceTransformer
     import faiss
     import numpy as np
+
     HAS_SEMANTIC = True
 except ImportError:
     HAS_SEMANTIC = False
@@ -75,7 +76,9 @@ class SemanticIndex:
                 self._paths.append(path)
                 self._index.add(embedding.reshape(1, -1))
 
-    def search(self, query: str, top_k: int = 8, min_similarity: float = 0.2) -> list[tuple[str, float]]:
+    def search(
+        self, query: str, top_k: int = 8, min_similarity: float = 0.2
+    ) -> list[tuple[str, float]]:
         """Search by meaning, not keywords.
 
         Args:
@@ -106,15 +109,15 @@ class SemanticIndex:
     def _encode(self, text: str):
         """Encode text to normalized embedding vector."""
         emb = self._model.encode(text, normalize_embeddings=True)
-        return np.array(emb, dtype='float32')
+        return np.array(emb, dtype="float32")
 
     def stats(self) -> dict:
         """Index stats."""
         return {
-            'available': self.available,
-            'model': self._model_name if self.available else None,
-            'indexed_paths': len(self._paths),
-            'dimension': self._dim if self.available else 0,
+            "available": self.available,
+            "model": self._model_name if self.available else None,
+            "indexed_paths": len(self._paths),
+            "dimension": self._dim if self.available else 0,
         }
 
 
