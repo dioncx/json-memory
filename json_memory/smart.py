@@ -3292,6 +3292,9 @@ class SmartMemory:
         if path not in self._meta:
             self._meta[path] = PathMeta(ttl=ttl, protected=protected, tags=tags,
                                          confidence=confidence)
+        else:
+            if protected:
+                self._meta[path].protected = True
         meta = self._meta[path]
         meta.last_accessed = time.time()
         meta.tokens = self._extract_tokens(path, value)

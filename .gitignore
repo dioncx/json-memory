@@ -13,3 +13,5 @@ json_memory[semantic]
 smart_memory.json
 smart_memory.meta.json
 *.cold.json
+smart_memory.json
+smart_memory.meta.json
