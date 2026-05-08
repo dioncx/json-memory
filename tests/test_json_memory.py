@@ -877,9 +877,9 @@ def test_lru_native_overflow():
         # Even with eviction, this single key is too big
         mem.set("giant", "Z" * 100)
 
-def test_auto_flush_persistence():
+def test_auto_flush_persistence(tmp_path):
     import os
-    flush_file = "tests/test_flush.json"
+    flush_file = "./tests/test_flush.json"
     if os.path.exists(flush_file):
         os.remove(flush_file)
         
@@ -958,10 +958,10 @@ def test_openai_tool_export():
 
 # ── Phase 8: Framework Maturity Tests ──────────────────────────
 
-def test_sqlite_adapter():
+def test_sqlite_adapter(tmp_path):
     import os
     from json_memory.adapters import SQLiteAdapter
-    db_file = "tests/test_brain.db"
+    db_file = "./tests/test_brain.db"
     if os.path.exists(db_file): os.remove(db_file)
     
     try:
@@ -1006,9 +1006,9 @@ def test_data_redaction():
     assert d["user"]["password"] == "***REDACTED***"
     assert d["user"]["email"] == "alice@example.com"
 
-def test_adapter_auto_config():
+def test_adapter_auto_config(tmp_path):
     import os
-    file_path = "tests/test_auto.json"
+    file_path = "./tests/test_auto.json"
     if os.path.exists(file_path): os.remove(file_path)
     
     try:
