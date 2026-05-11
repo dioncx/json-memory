@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Memory Versioning — Track history of all memory changes.
 
@@ -60,7 +61,7 @@ class MemoryVersioning:
         old_value: Any,
         new_value: Any,
         operation: str = "set",
-        metadata: Dict[str, Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Record a memory change.
 
@@ -97,7 +98,11 @@ class MemoryVersioning:
         return version_id
 
     def get_history(
-        self, path: str = None, limit: int = 100, start_time: float = None, end_time: float = None
+        self,
+        path: Optional[str] = None,
+        limit: int | float = 100,
+        start_time: Optional[float] = None,
+        end_time: Optional[float] = None,
     ) -> List[MemoryVersion]:
         """Get version history.
 
@@ -125,9 +130,11 @@ class MemoryVersioning:
             versions = [v for v in versions if v.timestamp <= end_time]
 
         # Sort by timestamp (newest first)
-        versions = sorted(versions, key=lambda v: v.timestamp, reverse=True)
+        versions.sort(key=lambda v: v.timestamp, reverse=True)
 
-        return versions[:limit]
+        if limit != float("inf"):
+            return versions[: int(limit)]
+        return versions
 
     def get_value_at(self, path: str, timestamp: float) -> Tuple[Any, bool]:
         """Get the value of a path at a specific time.
@@ -213,7 +220,7 @@ class MemoryVersioning:
             timestamp_new=timestamp_new,
         )
 
-    def get_recent_changes(self, seconds: float = 3600, limit: int = 100) -> List[MemoryVersion]:
+    def get_recent_changes(self, seconds: float = 3600, limit: int | float = 100) -> List[MemoryVersion]:
         """Get recent changes within time window.
 
         Args:
@@ -226,7 +233,7 @@ class MemoryVersioning:
         cutoff = time.time() - seconds
         return self.get_history(limit=limit, start_time=cutoff)
 
-    def get_change_count(self, path: str = None, seconds: float = None) -> int:
+    def get_change_count(self, path: Optional[str] = None, seconds: Optional[float] = None) -> int:
         """Get count of changes.
 
         Args:
@@ -247,7 +254,7 @@ class MemoryVersioning:
 
         return len(versions)
 
-    def get_most_changed(self, limit: int = 10, seconds: float = None) -> List[Tuple[str, int]]:
+    def get_most_changed(self, limit: int = 10, seconds: Optional[float] = None) -> List[Tuple[str, int]]:
         """Get most frequently changed paths.
 
         Args:
@@ -274,7 +281,7 @@ class MemoryVersioning:
 
         return counts[:limit]
 
-    def export_history(self, path: str = None, format: str = "json") -> str:
+    def export_history(self, path: Optional[str] = None, format: str = "json") -> str:
         """Export version history.
 
         Args:
@@ -329,7 +336,7 @@ class MemoryVersioning:
         for i, version in enumerate(self.versions):
             self.path_index[version.path].append(i)
 
-    def clear(self, before_timestamp: float = None):
+    def clear(self, before_timestamp: Optional[float] = None):
         """Clear version history.
 
         Args:

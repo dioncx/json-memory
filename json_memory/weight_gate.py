@@ -307,7 +307,7 @@ def _tokenize(text: str, ngram_size: int = 1) -> set[str]:
     return all_forms
 
 
-def _matches_term(tokens: set[str], term: str, cache: dict[str, set[str]] = None) -> bool:
+def _matches_term(tokens: set[str], term: str, cache: Optional[dict[str, set[str]]] = None) -> bool:
     """Check if a term (concept or association) appears in the token set.
 
     For single words: compares candidate sets for overlap.
@@ -367,8 +367,8 @@ class WeightGate:
 
     def __init__(
         self,
-        path: str = None,
-        synapse: Synapse = None,
+        path: Optional[str] = None,
+        synapse: Optional[Synapse] = None,
         decay_rate: float = 0.01,
         boost_rate: float = 0.05,
         min_weight: float = 0.1,
@@ -565,12 +565,12 @@ class WeightGate:
         self._synapse.set_weight(concept, assoc, weight)
         self._save()
 
-    def strengthen(self, concept: str, assoc: str, boost: float = None) -> float:
+    def strengthen(self, concept: str, assoc: str, boost: Optional[float] = None) -> float:
         """Manually strengthen an association."""
         boost = boost if boost is not None else self.boost_rate
         return self._synapse.strengthen(concept, assoc, boost)
 
-    def weaken(self, concept: str, assoc: str, decay: float = None) -> float:
+    def weaken(self, concept: str, assoc: str, decay: Optional[float] = None) -> float:
         """Manually weaken an association."""
         decay = decay if decay is not None else self.decay_rate
         return self._synapse.weaken(concept, assoc, decay)

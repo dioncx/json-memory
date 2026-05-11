@@ -52,6 +52,7 @@ class Memory:
         redact_keys: Optional[List[str]] = None,
         on_evict: Optional[Callable[[str, Any], None]] = None,
         cold_storage_path: Optional[str] = None,
+        history_limit: int = 1000,
     ):
         self._data = data or {}
         self.max_chars = max_chars
@@ -62,6 +63,7 @@ class Memory:
         self.redact_keys = redact_keys or []
         self.on_evict = on_evict
         self.cold_storage_path = cold_storage_path
+        self.history_limit = history_limit
         self._cold_store: Optional["Memory"] = None  # Lazy-loaded cold storage
         self._lock = threading.RLock()
         self._audit_log: list[dict] = []
@@ -75,6 +77,10 @@ class Memory:
         # Auto-configure adapter if path is given but no adapter provided
         if self.auto_flush_path and not self.storage_adapter:
             self.storage_adapter = FileAdapter(self.auto_flush_path)
+
+        # Load history if tracking is enabled and adapter path exists
+        if self.track_history and self.auto_flush_path:
+            self._load_history()
 
         # Load initial state from adapter if available
         if self.storage_adapter:
@@ -158,7 +164,7 @@ class Memory:
             return default
         return result
 
-    def increment(self, path: str, delta: int = 1) -> int:
+    def increment(self, path: str, delta: int = 1) -> Union[int, float]:
         """Atomically increment a numeric value at path (initializes to 0 if missing)."""
         current = self.get(path, 0)
         if not isinstance(current, (int, float)):
@@ -168,7 +174,7 @@ class Memory:
         self._track_access(path)
         return new_val
 
-    def touch(self, path: str, timestamp: float = None) -> "Memory":
+    def touch(self, path: str, timestamp: Optional[float] = None) -> "Memory":
         """Set a timestamp at path. Defaults to time.time()."""
         ts = timestamp if timestamp is not None else time.time()
         return self.set(path, ts)
@@ -307,19 +313,7 @@ class Memory:
             elif path in self._ttls:
                 del self._ttls[path]
 
-            if self.track_history:
-                val_to_log = value
-                if any(red_key in path.split(".") for red_key in self.redact_keys):
-                    val_to_log = "***REDACTED***"
-
-                self._audit_log.append(
-                    {
-                        "time": time.time(),
-                        "action": "set",
-                        "path": path,
-                        "value": copy.deepcopy(val_to_log),
-                    }
-                )
+            self._add_to_history("set", path, value)
 
             self._track_access(path)
             self._trigger_watchers(path, value)
@@ -415,10 +409,10 @@ class Memory:
 
     def cold_search(
         self,
-        query: str = None,
-        path_pattern: str = None,
-        older_than: float = None,
-        newer_than: float = None,
+        query: Optional[str] = None,
+        path_pattern: Optional[str] = None,
+        older_than: Optional[float] = None,
+        newer_than: Optional[float] = None,
     ) -> list[dict]:
         """Search cold storage for archived facts.
 
@@ -527,7 +521,7 @@ class Memory:
         result["count"] = len(result["recovered"])
         return result
 
-    def purge_cold(self, older_than: float = None, keep_last: int = None) -> dict:
+    def purge_cold(self, older_than: Optional[float] = None, keep_last: Optional[int] = None) -> dict:
         """Permanently delete old facts from cold storage.
 
         Args:
@@ -627,10 +621,7 @@ class Memory:
                     return False
 
             if keys[-1] in node:
-                if self.track_history:
-                    self._audit_log.append(
-                        {"time": time.time(), "action": "delete", "path": path, "value": None}
-                    )
+                self._add_to_history("delete", path, None)
 
                 del node[keys[-1]]
 
@@ -998,6 +989,61 @@ class Memory:
             return str(Path(self.auto_flush_path).with_suffix(".snapshots.json"))
         return None
 
+    def _history_path(self) -> Optional[str]:
+        """Internal: resolve the persistent history file path."""
+        if self.auto_flush_path:
+            from pathlib import Path
+
+            return str(Path(self.auto_flush_path).with_suffix(".history.json"))
+        return None
+
+    def _load_history(self) -> None:
+        """Internal: load history from disk."""
+        path = self._history_path()
+        if path:
+            try:
+                from pathlib import Path
+
+                p = Path(path)
+                if p.exists():
+                    self._audit_log = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+    def _save_history(self) -> None:
+        """Internal: save history to disk."""
+        path = self._history_path()
+        if path:
+            try:
+                from pathlib import Path
+
+                p = Path(path)
+                p.write_text(json.dumps(self._audit_log, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+
+    def _add_to_history(self, action: str, path: str, value: Any) -> None:
+        """Internal: add an entry to history and enforce limit."""
+        if not self.track_history:
+            return
+
+        # Redact if necessary
+        val_to_log = value
+        if any(red_key in path.split(".") for red_key in self.redact_keys):
+            val_to_log = "***REDACTED***"
+
+        entry = {
+            "time": time.time(),
+            "action": action,
+            "path": path,
+            "value": copy.deepcopy(val_to_log),
+        }
+
+        with self._lock:
+            self._audit_log.append(entry)
+            if len(self._audit_log) > self.history_limit:
+                self._audit_log = self._audit_log[-self.history_limit:]
+
     def save_snapshot(self, name: str, description: str = "") -> bool:
         """Save current state as a named snapshot to disk (persistent).
 
@@ -1244,6 +1290,9 @@ class Memory:
                 return
             self.storage_adapter.save(self.get_state())
 
+            if self.track_history:
+                self._save_history()
+
     def _auto_flush(self) -> None:
         """Internal: flush if adapter is configured."""
         if self.storage_adapter:
@@ -1285,25 +1334,6 @@ class Memory:
             current = f"{current}.{key}" if current else key
             self._access_times[current] = now
 
-    def _paths_recursive(self, current_node: Any, current_prefix: str, results: list) -> None:
-        """Internal: recursively collect leaf paths."""
-        if isinstance(current_node, dict):
-            for k, v in current_node.items():
-                full_path = f"{current_prefix}.{k}" if current_prefix else k
-                if isinstance(v, dict):
-                    self._paths_recursive(v, full_path, results)
-                else:
-                    results.append(full_path)
-
-    def _items_recursive(self, current_node: Any, current_prefix: str, results: list) -> None:
-        """Internal: recursively collect leaf (path, value) tuples."""
-        if isinstance(current_node, dict):
-            for k, v in current_node.items():
-                full_path = f"{current_prefix}.{k}" if current_prefix else k
-                if isinstance(v, dict):
-                    self._items_recursive(v, full_path, results)
-                else:
-                    results.append((full_path, v))
 
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""

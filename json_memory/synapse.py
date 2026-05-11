@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Synapse — Associative memory with linked concept traversal.
 
@@ -37,7 +38,7 @@ class Synapse:
         concept: str,
         associations: list[str],
         bidirectional: bool = True,
-        weights: dict[str, float] = None,
+        weights: Optional[dict[str, float]] = None,
     ) -> None:
         """Link a concept to its associations with optional weights.
 

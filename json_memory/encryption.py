@@ -28,7 +28,7 @@ class EncryptedValue:
 class MemoryEncryption:
     """Encrypt and decrypt memory values."""
 
-    def __init__(self, master_key: str = None):
+    def __init__(self, master_key: Optional[str] = None):
         """Initialize encryption with optional master key.
 
         Args:
@@ -51,7 +51,7 @@ class MemoryEncryption:
         """Generate a random encryption key."""
         return os.urandom(32)
 
-    def encrypt(self, value: Any, key_id: str = None) -> EncryptedValue:
+    def encrypt(self, value: Any, key_id: Optional[str] = None) -> EncryptedValue:
         """Encrypt a value.
 
         Args:
@@ -113,7 +113,7 @@ class MemoryEncryption:
         """
         self._key_store[key_id] = key
 
-    def rotate_key(self, new_key: bytes = None) -> str:
+    def rotate_key(self, new_key: Optional[bytes] = None) -> str:
         """Rotate to a new master key.
 
         Args:
@@ -132,7 +132,7 @@ class MemoryEncryption:
 
         return new_key_id
 
-    def export_key(self, key_id: str = None) -> str:
+    def export_key(self, key_id: Optional[str] = None) -> str:
         """Export a key as base64 string.
 
         Args:
@@ -150,7 +150,7 @@ class MemoryEncryption:
 
         return base64.b64encode(key).decode("utf-8")
 
-    def import_key(self, key_base64: str, key_id: str = None) -> str:
+    def import_key(self, key_base64: str, key_id: Optional[str] = None) -> str:
         """Import a key from base64 string.
 
         Args:
@@ -181,7 +181,7 @@ class MemoryEncryption:
             return all(k in value for k in ["ciphertext", "iv", "key_id"])
         return False
 
-    def to_dict(self, encrypted: EncryptedValue) -> Dict[str, str]:
+    def to_dict(self, encrypted: EncryptedValue) -> Dict[str, Any]:
         """Convert EncryptedValue to dict for storage.
 
         Args:
@@ -209,7 +209,7 @@ class MemoryEncryption:
         return EncryptedValue(ciphertext=data["ciphertext"], iv=data["iv"], key_id=data["key_id"])
 
 
-def create_encryption(master_key: str = None) -> MemoryEncryption:
+def create_encryption(master_key: Optional[str] = None) -> MemoryEncryption:
     """Convenience function to create MemoryEncryption."""
     return MemoryEncryption(master_key=master_key)
 
