@@ -1015,6 +1015,7 @@ def test_sqlite_adapter(tmp_path):
     import os
     from json_memory.adapters import SQLiteAdapter
     db_file = str(tmp_path / "test_brain.db")
+
     try:
         adapter = SQLiteAdapter(db_file)
         mem = Memory(storage_adapter=adapter)
@@ -1066,6 +1067,7 @@ def test_adapter_auto_config(tmp_path):
     file_path = "tests/test_auto.json"
     if os.path.exists(file_path):
         os.remove(file_path)
+
     try:
         mem = Memory(auto_flush_path=file_path)
         from json_memory.adapters import FileAdapter
