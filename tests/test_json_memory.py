@@ -4,8 +4,8 @@ import json
 import pytest
 from json_memory import Memory, Synapse, Schema, WeightGate, compress, decompress, savings_report
 
+# -- Memory Tests --------------------------------------------------
 
-# ── Memory Tests ──────────────────────────────────────────────────
 
 class TestMemory:
     def test_create_empty(self):
@@ -167,7 +167,8 @@ class TestMemory:
         assert "leafs=1" in r
 
 
-# ── Synapse Tests ─────────────────────────────────────────────────
+# -- Synapse Tests -------------------------------------------------
+
 
 class TestSynapse:
     def test_create(self):
@@ -208,7 +209,7 @@ class TestSynapse:
         s.link("hub", ["a", "b", "c", "d", "e"])
         info = s.connections("hub")
         assert info["count"] == 5
-        assert info["is_hub"] is True
+        assert info["is_hub"] == True
 
     def test_find_path(self):
         s = Synapse()
@@ -229,6 +230,8 @@ class TestSynapse:
         s.link("hub2", ["x", "y", "z"])
         s.link("small", ["a"])
         hubs = s.hubs(min_connections=3)
+        assert hubs is not None
+        assert len(hubs) > 0
         assert hubs[0][0] == "hub1"
         assert hubs[0][1] == 4  # 4 children
 
@@ -251,8 +254,11 @@ class TestSynapse:
 class TestSynapseWeights:
     def test_weighted_link(self):
         s = Synapse()
-        s.link("coffee", ["cappuccino", "americano", "espresso"],
-               weights={"cappuccino": 0.9, "americano": 0.3, "espresso": 0.6})
+        s.link(
+            "coffee",
+            ["cappuccino", "americano", "espresso"],
+            weights={"cappuccino": 0.9, "americano": 0.3, "espresso": 0.6},
+        )
         assert s.get_weight("coffee", "cappuccino") == 0.9
         assert s.get_weight("coffee", "americano") == 0.3
         assert s.get_weight("coffee", "espresso") == 0.6
@@ -264,8 +270,11 @@ class TestSynapseWeights:
 
     def test_activate_sorted_by_weight(self):
         s = Synapse()
-        s.link("coffee", ["cappuccino", "americano", "espresso"],
-               weights={"cappuccino": 0.9, "americano": 0.3, "espresso": 0.6})
+        s.link(
+            "coffee",
+            ["cappuccino", "americano", "espresso"],
+            weights={"cappuccino": 0.9, "americano": 0.3, "espresso": 0.6},
+        )
         result = s.activate("coffee", depth=1)
         assert result[0] == "cappuccino"  # highest weight first
         assert result[1] == "espresso"
@@ -273,8 +282,7 @@ class TestSynapseWeights:
 
     def test_unweighted_activate(self):
         s = Synapse()
-        s.link("coffee", ["cappuccino", "americano"],
-               weights={"cappuccino": 0.9, "americano": 0.3})
+        s.link("coffee", ["cappuccino", "americano"], weights={"cappuccino": 0.9, "americano": 0.3})
         result = s.activate("coffee", depth=1, weighted=False)
         # Original insertion order
         assert result == ["cappuccino", "americano"]
@@ -316,8 +324,11 @@ class TestSynapseWeights:
 
     def test_top_associations(self):
         s = Synapse()
-        s.link("coffee", ["cappuccino", "americano", "espresso", "latte"],
-               weights={"cappuccino": 0.9, "americano": 0.3, "espresso": 0.6, "latte": 0.7})
+        s.link(
+            "coffee",
+            ["cappuccino", "americano", "espresso", "latte"],
+            weights={"cappuccino": 0.9, "americano": 0.3, "espresso": 0.6, "latte": 0.7},
+        )
         top = s.top_associations("coffee", limit=2)
         assert top[0] == ("cappuccino", 0.9)
         assert top[1] == ("latte", 0.7)
@@ -325,14 +336,13 @@ class TestSynapseWeights:
     def test_learning_simulation(self):
         """Simulate learning: user always picks cappuccino, rarely picks americano."""
         s = Synapse()
-        s.link("coffee", ["cappuccino", "americano"],
-               weights={"cappuccino": 0.5, "americano": 0.5})
+        s.link("coffee", ["cappuccino", "americano"], weights={"cappuccino": 0.5, "americano": 0.5})
 
-        # User picks cappuccino 10 times → strengthens
+        # User picks cappuccino 10 times -> strengthens
         for _ in range(10):
             s.strengthen("coffee", "cappuccino", boost=0.05)
 
-        # User never picks americano → weakens
+        # User never picks americano -> weakens
         for _ in range(10):
             s.weaken("coffee", "americano", decay=0.03)
 
@@ -354,13 +364,19 @@ class TestSynapseWeights:
         """Two people with different coffee preferences."""
         # Person A: loves cappuccino
         person_a = Synapse()
-        person_a.link("coffee", ["cappuccino", "americano", "espresso"],
-                      weights={"cappuccino": 0.95, "americano": 0.2, "espresso": 0.5})
+        person_a.link(
+            "coffee",
+            ["cappuccino", "americano", "espresso"],
+            weights={"cappuccino": 0.95, "americano": 0.2, "espresso": 0.5},
+        )
 
         # Person B: loves americano
         person_b = Synapse()
-        person_b.link("coffee", ["cappuccino", "americano", "espresso"],
-                      weights={"cappuccino": 0.2, "americano": 0.9, "espresso": 0.4})
+        person_b.link(
+            "coffee",
+            ["cappuccino", "americano", "espresso"],
+            weights={"cappuccino": 0.2, "americano": 0.9, "espresso": 0.4},
+        )
 
         # Same concept, different recall order
         a_first = person_a.activate("coffee", depth=1)[0]
@@ -370,7 +386,8 @@ class TestSynapseWeights:
         assert b_first == "americano"
 
 
-# ── Schema Tests ──────────────────────────────────────────────────
+# -- Schema Tests --------------------------------------------------
+
 
 class TestSchema:
     def test_validate_simple(self):
@@ -400,7 +417,8 @@ class TestSchema:
         assert schema.export() == '{"x":"str"}'
 
 
-# ── Compress Tests ────────────────────────────────────────────────
+# -- Compress Tests ------------------------------------------------
+
 
 class TestCompress:
     def test_compress_dict(self):
@@ -426,14 +444,17 @@ class TestCompress:
 
     def test_prose_to_json(self):
         prose = "name: Alice\ntz: UTC\nplatform: Telegram"
-        result = json.loads(json.dumps(
-            __import__("json_memory.compress", fromlist=["prose_to_json"]).prose_to_json(prose)
-        ))
+        result = json.loads(
+            json.dumps(
+                __import__("json_memory.compress", fromlist=["prose_to_json"]).prose_to_json(prose)
+            )
+        )
         assert result["name"] == "Alice"
         assert result["tz"] == "UTC"
 
 
-# ── WeightGate Tests ─────────────────────────────────────────────
+# -- WeightGate Tests ---------------------------------------------
+
 
 class TestWeightGate:
     def _make_gate(self, tmp_path, enabled=True):
@@ -445,21 +466,22 @@ class TestWeightGate:
 
     def test_disabled_by_default(self):
         from json_memory import WeightGate
+
         gate = WeightGate("/tmp/test_gate.json")
-        assert gate.enabled is False
+        assert gate.enabled == False
 
     def test_enable_disable(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=False)
-        assert gate.enabled is False
+        assert gate.enabled == False
         gate.enable()
-        assert gate.enabled is True
+        assert gate.enabled == True
         gate.disable()
-        assert gate.enabled is False
+        assert gate.enabled == False
 
     def test_toggle(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=False)
-        assert gate.toggle() is True
-        assert gate.toggle() is False
+        assert gate.toggle() == True
+        assert gate.toggle() == False
 
     def test_disabled_is_noop(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=False)
@@ -476,18 +498,18 @@ class TestWeightGate:
 
     def test_process_input_decay(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=True)
-        # Concept + one association mentioned → competition → unmentioned decay
+        # Concept + one association mentioned -> competition -> unmentioned decay
         gate.process_input("I love coffee cappuccino")
         weights = gate.get_weights("coffee")
         assert weights["cappuccino"] > 0.5  # boosted (mentioned)
-        assert weights["americano"] < 0.3   # decayed (competition — lost to cappuccino)
+        assert weights["americano"] < 0.3  # decayed (competition -- lost to cappuccino)
 
     def test_process_input_no_decay_without_competition(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=True)
-        # Concept mentioned but no association → no competition → no decay
+        # Concept mentioned but no association -> no competition -> no decay
         gate.process_input("I love coffee so much")
         weights = gate.get_weights("coffee")
-        assert weights["americano"] == 0.3  # unchanged — no competition
+        assert weights["americano"] == 0.3  # unchanged -- no competition
 
     def test_process_output_strengthen(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=True)
@@ -497,10 +519,7 @@ class TestWeightGate:
 
     def test_process_conversation(self, tmp_path):
         gate = self._make_gate(tmp_path, enabled=True)
-        result = gate.process_conversation(
-            "check the logs",
-            "Looking at logs now, found the error"
-        )
+        result = gate.process_conversation("check the logs", "Looking at logs now, found the error")
         assert "input" in result
         assert "output" in result
         assert result["total_interactions"] == 1
@@ -514,14 +533,14 @@ class TestWeightGate:
         path = str(tmp_path / "ctx_synapse.json")
         with WeightGate(path) as gate:
             gate.add_concept("x", {"a": 0.5})
-            assert gate.enabled is True
-        assert gate.enabled is False
+            assert gate.enabled == True
+        assert gate.enabled == False
 
     def test_add_remove_concept(self, tmp_path):
         gate = self._make_gate(tmp_path)
         gate.add_concept("new", {"a": 0.5, "b": 0.3})
         assert gate.get_weights("new") == {"a": 0.5, "b": 0.3}
-        assert gate.remove_concept("new") is True
+        assert gate.remove_concept("new") == True
         assert gate.get_weights("new") == {}
 
     def test_top_associations(self, tmp_path):
@@ -562,15 +581,17 @@ class TestWeightGate:
         assert "[OFF]" in r
 
 
-# ── New Feature & Bug Fix Tests ───────────────────────────────────
+# -- New Feature & Bug Fix Tests -----------------------------------
+
 
 def test_schema_strict_with_required_fields():
     """Test bug fix for strict mode failing with '!' prefix keys."""
     schema = Schema({"!user": {"!name": "str"}})
     # This should now pass in strict mode
-    assert schema.validate({"user": {"name": "Alice"}}, strict=True) is True
+    assert schema.validate({"user": {"name": "Alice"}}, strict=True) == True
     # Extra keys should still fail
-    assert schema.validate({"user": {"name": "Alice", "age": 30}}, strict=True) is False
+    assert schema.validate({"user": {"name": "Alice", "age": 30}}, strict=True) == False
+
 
 def test_memory_clear_edge_cases():
     mem = Memory()
@@ -582,6 +603,7 @@ def test_memory_clear_edge_cases():
     mem.clear("")
     assert mem.export() == "{}"
 
+
 def test_synapse_mutation_safety():
     """Test that to_dict() returns deep copies of nested structures."""
     s = Synapse()
@@ -592,14 +614,15 @@ def test_synapse_mutation_safety():
     # Original should NOT be changed
     assert "c" not in s._links["a"]
 
+
 def test_synapse_rename_concept():
     s = Synapse()
     s.link("a", ["b"], weights={"b": 0.8})
     s._frequencies["a"]["b"] = 5
     s._metadata["a"] = {"note": "test"}
-    
+
     success = s.rename_concept("a", "alpha")
-    assert success is True
+    assert success == True
     assert "a" not in s._links
     assert "alpha" in s._links
     assert "b" in s._links["alpha"]
@@ -610,12 +633,13 @@ def test_synapse_rename_concept():
     assert "alpha" in s._links["b"]
     assert "a" not in s._links["b"]
 
+
 def test_synapse_subgraph():
     s = Synapse()
     s.link("a", ["b", "c"], bidirectional=False)
     s.link("b", ["c"], bidirectional=False)
     s.link("c", ["d"], bidirectional=False)
-    
+
     sub = s.subgraph(["a", "b", "c"])
     assert "a" in sub._links
     assert "b" in sub._links
@@ -626,24 +650,27 @@ def test_synapse_subgraph():
     # 'c' should link to NOTHING (since 'd' is not in subgraph)
     assert sub._links["c"] == []
 
+
 def test_memory_get_or_set():
     mem = Memory()
     val = mem.get_or_set("user.name", "Alice")
     assert val == "Alice"
     assert mem.get("user.name") == "Alice"
-    
+
     val2 = mem.get_or_set("user.name", "Bob")
     assert val2 == "Alice"  # Already set
+
 
 def test_memory_increment():
     mem = Memory()
     assert mem.increment("hits") == 1
     assert mem.increment("hits") == 2
     assert mem.increment("hits", delta=5) == 7
-    
+
     # Test on non-numeric
     mem.set("label", "text")
     assert mem.increment("label") == 1
+
 
 def test_memory_batch_get():
     mem = Memory()
@@ -651,36 +678,38 @@ def test_memory_batch_get():
     results = mem.batch_get(["a", "b", "c"], default=0)
     assert results == {"a": 1, "b": 2, "c": 0}
 
+
 def test_schema_validate_memory():
     mem = Memory()
     mem.set("u.n", "Alice")
     schema = Schema({"u": {"n": "str"}})
-    assert schema.validate_memory(mem) is True
+    assert schema.validate_memory(mem) == True
     mem.set("u.n", 123)
-    assert schema.validate_memory(mem) is False
+    assert schema.validate_memory(mem) == False
 
 
-# ── Phase 3: Advanced Architecture Tests ─────────────────────────
+# -- Phase 3: Advanced Architecture Tests -------------------------
+
 
 def test_memory_watchers():
     mem = Memory()
     events = []
-    
+
     def on_change(path, val):
         events.append((path, val))
-        
+
     mem.watch("user.profile", on_change)
-    
+
     # Trigger on exact match
     mem.set("user.profile", {"name": "Alice"})
     assert len(events) == 1
     assert events[-1] == ("user.profile", {"name": "Alice"})
-    
+
     # Trigger on child update (non-exact)
     mem.set("user.profile.age", 30)
     assert len(events) == 2
     assert events[-1] == ("user.profile.age", 30)
-    
+
     # Exact watch
     exact_events = []
     mem.watch("status", lambda p, v: exact_events.append(v), exact=True)
@@ -690,6 +719,7 @@ def test_memory_watchers():
     assert len(exact_events) == 1
     assert exact_events[0] == "ready"
 
+
 def test_synapse_strongest_path():
     s = Synapse()
     # Path 1: a -> b -> c (weights: 0.1, 0.1) -> weak
@@ -697,96 +727,109 @@ def test_synapse_strongest_path():
     s.link("a", ["b", "d"], bidirectional=False, weights={"b": 0.1, "d": 0.9})
     s.link("b", ["c"], bidirectional=False, weights={"c": 0.1})
     s.link("d", ["c"], bidirectional=False, weights={"c": 0.9})
-    
+
     # BFS find_path might return either 2-hop path (non-deterministic if order same)
     # find_strongest_path MUST return [a, d, c]
     path = s.find_strongest_path("a", "c")
     assert path == ["a", "d", "c"]
+
 
 def test_weightgate_ngrams():
     s = Synapse()
     s.link("machine learning", ["ai", "python"])
     # Default ngram_size=1 would miss "machine learning"
     gate = WeightGate(synapse=s, enabled=True, ngram_size=2)
-    
+
     # Process text mentioning the bigram + an association to trigger a change
     changes = gate.process_input("I work on machine learning and ai")
     assert "machine learning" in changes
     assert "ai↑" in changes["machine learning"]
 
+
 def test_schema_typed_lists():
     # List of strings
     schema = Schema({"tags": ["str"]})
-    assert schema.validate({"tags": ["a", "b", "c"]}) is True
-    assert schema.validate({"tags": ["a", 1, "c"]}) is False
-    
+    assert schema.validate({"tags": ["a", "b", "c"]}) == True
+    assert schema.validate({"tags": ["a", 1, "c"]}) == False
+
     # List of objects
     schema_nested = Schema({"users": [{"name": "str", "!age": "int"}]})
-    assert schema_nested.validate({"users": [{"name": "A", "age": 1}]}) is True
-    assert schema_nested.validate({"users": [{"name": "A"}]}) is False  # Missing required '!age'
-    
+    assert schema_nested.validate({"users": [{"name": "A", "age": 1}]}) == True
+    assert schema_nested.validate({"users": [{"name": "A"}]}) == False  # Missing required '!age'
+
     # Default skeleton for lists
     assert schema.defaults() == {"tags": []}
 
 
-# ── Phase 4: Ephemeral Memory (TTL) Tests ───────────────────────
+# -- Phase 4: Ephemeral Memory (TTL) Tests -----------------------
+
 
 def test_memory_ttl_expiry():
     import time
+
     mem = Memory()
     mem.set("temp", "value", ttl=0.1)
     assert mem.get("temp") == "value"
-    
+
     time.sleep(0.15)
     assert mem.get("temp") is None
     assert "temp" not in mem._data
 
+
 def test_memory_ttl_parent_expiry():
     import time
+
     mem = Memory()
     mem.set("session", {"user": "Alice", "token": "123"}, ttl=0.1)
     assert mem.get("session.user") == "Alice"
-    
+
     time.sleep(0.15)
     # Accessing child should trigger parent expiry check
     assert mem.get("session.user") is None
     assert "session" not in mem._data
 
+
 def test_memory_ttl_persistence():
     mem = Memory()
     mem.set("key", "val", ttl=100)
-    
+
     state = mem.get_state()
-    
+
     mem2 = Memory()
     mem2.set_state(state)
     assert mem2.get("key") == "val"
     assert "key" in mem2._ttls
 
+
 def test_memory_purge_expired():
     import time
+
     mem = Memory()
     mem.set("a", 1, ttl=0.1)
     mem.set("b", 2, ttl=100)
-    
+
     time.sleep(0.15)
     removed = mem.purge_expired()
     assert removed == 1
     assert "a" not in mem._data
     assert "b" in mem._data
 
+
 def test_memory_export_purges():
     import time
+
     mem = Memory()
     mem.set("temp", "secret", ttl=0.1)
     time.sleep(0.15)
-    
+
     # Export should not include expired key
     out = mem.export()
     assert "secret" not in out
     assert mem.get("temp") is None
 
-# ── Phase 5: Advanced Search & Transactions Tests ───────────────
+
+# -- Phase 5: Advanced Search & Transactions Tests ---------------
+
 
 def test_memory_find_regex():
     mem = Memory()
@@ -794,7 +837,7 @@ def test_memory_find_regex():
     mem.set("users.bob.health", 80)
     mem.set("users.charlie.status", "idle")
     mem.set("system.config.health", "ok")
-    
+
     # 1. Match one segment
     results = mem.find("users.*.health")
     assert len(results) == 2
@@ -807,13 +850,14 @@ def test_memory_find_regex():
     assert len(results) == 1
     assert results["system.config.health"] == "ok"
 
+
 def test_memory_find_double_wildcard():
     mem = Memory()
     mem.set("status", "global_ok")
     mem.set("job.status", "running")
     mem.set("job.task.subtask.status", "pending")
     mem.set("other.config", 1)
-    
+
     results = mem.find("**.status")
     assert len(results) == 3
     assert "status" in results
@@ -821,58 +865,65 @@ def test_memory_find_double_wildcard():
     assert "job.task.subtask.status" in results
     assert "other.config" not in results
 
+
 def test_memory_snapshot_rollback():
     mem = Memory()
     mem.set("user.name", "Alice", ttl=100)
     mem.set("user.score", 50)
-    
+
     # Take snapshot
     mem.snapshot("pre_trial")
-    
+
     # Mutate
     mem.set("user.name", "Bob")
     mem.delete("user.score")
     mem.set("trial.data", [1, 2, 3])
-    
+
     assert mem.get("user.name") == "Bob"
     assert mem.has("trial.data")
-    
+
     # Rollback
     success = mem.rollback("pre_trial")
-    assert success is True
+    assert success == True
     assert mem.get("user.name") == "Alice"
     assert mem.get("user.score") == 50
     assert "trial.data" not in mem._data
     assert "user.name" in mem._ttls  # Meta preserved
 
+
 def test_memory_rollback_not_found():
     mem = Memory()
-    assert mem.rollback("non_existent") is False
+    assert mem.rollback("non_existent") == False
 
-# ── Phase 6: Memory Fading & Persistence Tests ──────────────────
+
+# -- Phase 6: Memory Fading & Persistence Tests ------------------
+
 
 def test_lru_eviction():
     # max_chars=100, policy="lru"
     mem = Memory(max_chars=100, eviction_policy="lru")
-    
+
     # Fill up memory
-    mem.set("a", "old_and_stale") # ~20 chars
+    mem.set("a", "old_and_stale")  # ~20 chars
     mem.set("b", "accessing_now")
-    
+
     import time
+
     time.sleep(0.01)
-    mem.get("b") # b is now newer than a
-    
+    mem.get("b")  # b is now newer than a
+
     # This big update should force 'a' out
     mem.set("c", "X" * 60)
-    
+
     assert mem.has("c")
     assert mem.has("b")
-    assert not mem.has("a") # a should be evicted
+    assert not mem.has("a")  # a should be evicted
+
 
 def test_lru_native_overflow():
     mem = Memory(max_chars=50, eviction_policy="lru")
     import pytest
+
     with pytest.raises(ValueError):
         # Even with eviction, this single key is too big
         mem.set("giant", "Z" * 100)
@@ -882,50 +933,56 @@ def test_auto_flush_persistence(tmp_path):
     flush_file = "tests/test_flush.json"
     if os.path.exists(flush_file):
         os.remove(flush_file)
-        
+
     try:
         mem = Memory(max_chars=1000, auto_flush_path=flush_file)
         mem.set("persistent.key", "value")
-        
+
         # Verify file exists and has content
         assert os.path.exists(flush_file)
         with open(flush_file, "r") as f:
             data = json.load(f)
             assert data["data"]["persistent"]["key"] == "value"
-            
+
         # Verify changes flush automatically
         mem.set("persistent.other", 123)
         with open(flush_file, "r") as f:
             data = json.load(f)
             assert data["data"]["persistent"]["other"] == 123
-            
+
     finally:
         if os.path.exists(flush_file):
             os.remove(flush_file)
 
-# ── Phase 7: Enterprise & Concurrency Tests ────────────────────
+
+# -- Phase 7: Enterprise & Concurrency Tests --------------------
+
 
 def test_thread_safety():
     import threading
+
     mem = Memory(max_chars=1000)
     mem.set("counter", 0)
-    
+
     def worker():
         for _ in range(10):
             mem.increment("counter")
-            
+
     threads = [threading.Thread(target=worker) for _ in range(5)]
-    for t in threads: t.start()
-    for t in threads: t.join()
-    
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
     assert mem.get("counter") == 50
+
 
 def test_audit_history():
     mem = Memory(track_history=True)
     mem.set("user.name", "Alice")
     mem.set("user.age", 30)
     mem.delete("user.name")
-    
+
     hist = mem.history()
     assert len(hist) == 3
     assert hist[0]["action"] == "set"
@@ -934,21 +991,16 @@ def test_audit_history():
     assert hist[2]["action"] == "delete"
     assert hist[2]["path"] == "user.name"
 
+
 def test_openai_tool_export():
-    schema = Schema({
-        "!user": {
-            "name": "str",
-            "age": "int"
-        },
-        "tasks": ["str"]
-    })
-    
+    schema = Schema({"!user": {"name": "str", "age": "int"}, "tasks": ["str"]})
+
     tools = schema.to_openai_tools("update_memory", "Update the agent memory")
-    
+
     assert len(tools) == 1
     assert tools[0]["type"] == "function"
     assert tools[0]["function"]["name"] == "update_memory"
-    
+
     params = tools[0]["function"]["parameters"]
     assert params["type"] == "object"
     assert "user" in params["properties"]
@@ -956,35 +1008,38 @@ def test_openai_tool_export():
     assert params["properties"]["tasks"]["type"] == "array"
     assert params["properties"]["tasks"]["items"]["type"] == "string"
 
-# ── Phase 8: Framework Maturity Tests ──────────────────────────
+
+# -- Phase 8: Framework Maturity Tests --------------------------
 
 def test_sqlite_adapter(tmp_path):
     import os
     from json_memory.adapters import SQLiteAdapter
-    db_file = "tests/test_brain.db"
-    if os.path.exists(db_file): os.remove(db_file)
-    
+    db_file = str(tmp_path / "test_brain.db")
     try:
         adapter = SQLiteAdapter(db_file)
         mem = Memory(storage_adapter=adapter)
         mem.set("user.name", "SQLite User")
-        
+
         # Verify it saved
         state = adapter.load()
-        assert state["data"]["user"]["name"] == "SQLite User"
-        
+        assert state is not None
+        user_data = state.get("data", {}).get("user", {})
+        assert user_data.get("name") == "SQLite User"
+
         # Reload into new memory
         mem2 = Memory(storage_adapter=adapter)
         assert mem2.get("user.name") == "SQLite User"
     finally:
-        if os.path.exists(db_file): os.remove(db_file)
+        if os.path.exists(db_file):
+            os.remove(db_file)
+
 
 def test_data_redaction():
     mem = Memory(track_history=True, redact_keys=["api_key", "password"])
     mem.set("services.openai.api_key", "sk-12345")
     mem.set("user.password", "secret_pass")
     mem.set("user.email", "alice@example.com")
-    
+
     # 1. Test history redaction
     hist = mem.history()
     keys_in_hist = [entry["path"] for entry in hist]
@@ -992,14 +1047,14 @@ def test_data_redaction():
     # Find the specific entry
     api_key_entry = next(e for e in hist if e["path"] == "services.openai.api_key")
     assert api_key_entry["value"] == "***REDACTED***"
-    
+
     # 2. Test export redaction
     pretty = mem.export_pretty(redact=True)
     assert "sk-12345" not in pretty
     assert "secret_pass" not in pretty
     assert "***REDACTED***" in pretty
     assert "alice@example.com" in pretty
-    
+
     # 3. Test to_dict redaction
     d = mem.to_dict(redact=True)
     assert d["services"]["openai"]["api_key"] == "***REDACTED***"
@@ -1009,13 +1064,15 @@ def test_data_redaction():
 def test_adapter_auto_config(tmp_path):
     import os
     file_path = "tests/test_auto.json"
-    if os.path.exists(file_path): os.remove(file_path)
-    
+    if os.path.exists(file_path):
+        os.remove(file_path)
     try:
         mem = Memory(auto_flush_path=file_path)
         from json_memory.adapters import FileAdapter
+
         assert isinstance(mem.storage_adapter, FileAdapter)
         mem.set("key", "val")
         assert os.path.exists(file_path)
     finally:
-        if os.path.exists(file_path): os.remove(file_path)
+        if os.path.exists(file_path):
+            os.remove(file_path)
