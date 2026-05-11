@@ -1,8 +1,8 @@
-import json
-import time
+
+from __future__ import annotations
 
 """
-SmartMemory — Intelligent memory layer for AI agents.
+SmartMemory -- Intelligent memory layer for AI agents.
 
 Wraps Memory + Synapse with:
 - Weighted retrieval scoring (recency + frequency + keyword relevance)
@@ -19,9 +19,8 @@ import time
 import math
 import json
 import threading
-from typing import Any, Optional, List, Dict, Tuple
+from typing import Any, Optional, List, Dict, Tuple, Callable
 from pathlib import Path
-from collections import Counter
 
 from .memory import Memory
 from .synapse import Synapse
@@ -29,12 +28,12 @@ from .concept_map import expand_query_semantic, get_concept_category
 from .contradiction import detect_contradictions, Contradiction, ContradictionDetector
 from .consolidation import consolidate_memory, ConsolidationGroup
 from .forgetting import ForgettingCurve, MemoryStrength
-from .visualizer import MemoryVisualizer, visualize_memory
-from .versioning import MemoryVersioning, MemoryDiff
-from .encryption import MemoryEncryption, EncryptedValue
-from .search import AdvancedSearch, SearchResult
+from .visualizer import visualize_memory
+from .versioning import MemoryVersioning
+from .encryption import MemoryEncryption
+from .search import AdvancedSearch
 
-# ── Auto-Extractor Patterns ───────────────────────────────────────────
+# -- Auto-Extractor Patterns -------------------------------------------
 
 EXTRACTION_PATTERNS = [
     # Name patterns (use lookahead to stop at delimiters)
@@ -53,7 +52,7 @@ EXTRACTION_PATTERNS = [
     ),
     # Platform
     (r"(?:on |from )?(telegram|discord|slack|whatsapp|twitter|threads)", "user.platform", 0.7),
-    # Preferences — "I prefer to use X" or "I prefer X"
+    # Preferences -- "I prefer to use X" or "I prefer X"
     (
         r"(?:i prefer to use|i prefer|i like|i use) (\w+)(?:\s+for\s|\s*\.|\s*,|\s+(?:and|but|so)\s|$)",
         "user.preferences",
@@ -212,8 +211,8 @@ def _normalize_tokens(text: str) -> set[str]:
         if token in synonyms:
             expanded.update(synonyms[token])
 
-    # Stem expansion — strip common suffixes for broader matching
-    # Handles cases like "professional" ↔ "profession", "trading" ↔ "trade"
+    # Stem expansion -- strip common suffixes for broader matching
+    # Handles cases like "professional" <-> "profession", "trading" <-> "trade"
     stems = set()
     suffixes = ["ial", "ion", "ing", "ed", "ly", "ment", "ness", "able", "ive", "al", "ic", "ty"]
     for token in list(expanded):
@@ -246,7 +245,7 @@ def _frequency_score(access_count: int, max_count: int) -> float:
 
 
 def _keyword_relevance(
-    fact_tokens: set[str], query_tokens: set[str], path_tokens: set[str] = None
+    fact_tokens: set[str], query_tokens: Optional[set[str]], path_tokens: Optional[set[str]] = None
 ) -> float:
     """Weighted overlap between fact and query tokens.
 
@@ -286,7 +285,7 @@ def _keyword_relevance(
     return min(score, 1.0)
 
 
-# ── Negation Patterns ─────────────────────────────────────────────────
+# -- Negation Patterns -------------------------------------------------
 
 NEGATION_PATTERNS = [
     r"\bnot\b",
@@ -385,7 +384,7 @@ def _detect_negation(query: str) -> dict:
     return {"is_negated": False, "negation_type": None, "negation_keyword": None}
 
 
-# ── Temporal Patterns ─────────────────────────────────────────────────
+# -- Temporal Patterns -------------------------------------------------
 
 TEMPORAL_PATTERNS = {
     # Recent patterns (last X time units)
@@ -505,7 +504,7 @@ def _detect_temporal_intent(query: str) -> dict:
     return {"intent": None, "range_seconds": None}
 
 
-def _temporal_score(meta, temporal_intent: dict, now: float) -> float:
+def _temporal_score(meta: PathMeta, temporal_intent: Optional[dict], now: float) -> float:
     """Calculate temporal relevance score based on intent.
 
     Args:
@@ -566,7 +565,7 @@ def _temporal_score(meta, temporal_intent: dict, now: float) -> float:
     return 0.5
 
 
-def _negation_score(meta, negation_info: dict, query_tokens: set[str] = None) -> float:
+def _negation_score(meta: PathMeta, negation_info: Optional[dict], query_tokens: Optional[set[str]] = None) -> float:
     """Calculate negation relevance score.
 
     For negated queries (e.g., "What should I NOT do?"), we want to:
@@ -645,7 +644,7 @@ def _negation_score(meta, negation_info: dict, query_tokens: set[str] = None) ->
             return 0.3  # Less likely, but still include
 
 
-# ── Procedural Memory ─────────────────────────────────────────────────
+# -- Procedural Memory -------------------------------------------------
 
 
 class Skill:
@@ -662,7 +661,7 @@ class Skill:
         "transfer_count",
     ]
 
-    def __init__(self, name: str, principle: str, domains: list[str] = None):
+    def __init__(self, name: str, principle: str, domains: Optional[list[str]] = None):
         now = time.time()
         self.name = name  # e.g., "balance", "momentum_stability"
         self.principle = (
@@ -681,17 +680,17 @@ class Skill:
 class ProceduralMemory:
     """Manages skills and principles extracted from experiences."""
 
-    def __init__(self, path: str = None):
+    def __init__(self, path: Optional[str] = None):
         self.path = Path(path) if path else None
-        self.skills: dict[str, Skill] = {}  # name → Skill
-        self.domain_index: dict[str, set[str]] = {}  # domain → set of skill names
+        self.skills: dict[str, Skill] = {}  # name -> Skill
+        self.domain_index: dict[str, set[str]] = {}  # domain -> set of skill names
         self._lock = threading.RLock()
 
         if self.path and self.path.exists():
             self._load()
 
     def add_skill(
-        self, name: str, principle: str, domains: list[str] = None, examples: list[str] = None
+        self, name: str, principle: str, domains: Optional[list[str]] = None, examples: Optional[list[str]] = None
     ) -> Skill:
         """Add a new skill or strengthen existing one."""
         with self._lock:
@@ -727,7 +726,7 @@ class ProceduralMemory:
             return [self.skills[name] for name in skill_names if name in self.skills]
 
     def find_transferable_skills(
-        self, new_domain: str, context_keywords: set[str] = None
+        self, new_domain: Optional[str] = None, context_keywords: Optional[set[str]] = None
     ) -> list[Skill]:
         """Find skills that might transfer to a new domain."""
         with self._lock:
@@ -735,7 +734,7 @@ class ProceduralMemory:
 
             for skill in self.skills.values():
                 # Direct domain match
-                if new_domain in skill.domains:
+                if new_domain and new_domain in skill.domains:
                     transferable.append(skill)
                     continue
 
@@ -747,16 +746,17 @@ class ProceduralMemory:
                         continue
 
                 # Similar domains (fuzzy matching)
-                for domain in skill.domains:
-                    if self._domains_similar(domain, new_domain):
-                        transferable.append(skill)
-                        break
+                if new_domain:
+                    for domain in skill.domains:
+                        if self._domains_similar(domain, new_domain):
+                            transferable.append(skill)
+                            break
 
             # Sort by strength and transfer count
             transferable.sort(key=lambda s: (s.strength, s.transfer_count), reverse=True)
             return transferable
 
-    def apply_skill(self, skill_name: str, new_domain: str = None) -> bool:
+    def apply_skill(self, skill_name: str, new_domain: Optional[str] = None) -> bool:
         """Record that a skill was applied (strengthens it)."""
         with self._lock:
             if skill_name not in self.skills:
@@ -775,7 +775,7 @@ class ProceduralMemory:
 
             return True
 
-    def extract_principles(self, experience: str, domain: str = None) -> list[dict]:
+    def extract_principles(self, experience: str, domain: Optional[str] = None) -> list[dict]:
         """Extract principles from an experience (simplified pattern matching)."""
         # This is a simplified version - in production, use LLM or NLP
         principles = []
@@ -797,7 +797,7 @@ class ProceduralMemory:
             for match in matches:
                 if isinstance(match, tuple) and len(match) == 2:
                     cause, effect = match
-                    principle = f"{cause.strip()} → {effect.strip()}"
+                    principle = f"{cause.strip()} -> {effect.strip()}"
                     principles.append(
                         {
                             "principle": principle,
@@ -909,7 +909,7 @@ class ProceduralMemory:
             pass
 
 
-# ── Path Metadata ─────────────────────────────────────────────────────
+# -- Path Metadata -----------------------------------------------------
 
 
 class PathMeta:
@@ -933,9 +933,9 @@ class PathMeta:
 
     def __init__(
         self,
-        ttl: int = None,
+        ttl: Optional[int] = None,
         protected: bool = False,
-        tags: list[str] = None,
+        tags: Optional[list[str]] = None,
         confidence: float = 1.0,
     ):
         now = time.time()
@@ -958,9 +958,9 @@ class TieredMemory:
     """Manages hot/warm/cold memory tiers with automatic promotion/demotion.
 
     Tiers:
-        hot   — recently/frequently accessed. Injected into prompts.
-        warm  — older but still reachable. Available via recall_relevant().
-        cold  — archived to disk. Loaded on-demand only.
+        hot   -- recently/frequently accessed. Injected into prompts.
+        warm  -- older but still reachable. Available via recall_relevant().
+        cold  -- archived to disk. Loaded on-demand only.
     """
 
     def __init__(self, path: str, max_hot_chars: int = 2000, max_warm_chars: int = 5000):
@@ -987,7 +987,7 @@ class TieredMemory:
             except Exception:
                 pass
 
-    def set(self, path: str, value, tier: str = "hot", ttl: int = None):
+    def set(self, path: str, value, tier: str = "hot", ttl: Optional[int] = None):
         """Store value in specified tier."""
         target = {"hot": self.hot, "warm": self.warm, "cold": self.cold}[tier]
         target.set(path, value, ttl=ttl)
@@ -995,7 +995,7 @@ class TieredMemory:
             self._flush_cold()
 
     def get(self, path: str, default=None):
-        """Get from any tier (hot → warm → cold)."""
+        """Get from any tier (hot -> warm -> cold)."""
         val = self.hot.get(path, default=_MISSING)
         if val is not _MISSING:
             return val
@@ -1071,7 +1071,7 @@ class SmartMemory:
     """Intelligent agent memory with weighted retrieval and auto-extraction.
 
     Combines Memory (structured storage) + Synapse (associative links) with:
-    - Weighted scoring: recency × frequency × keyword relevance
+    - Weighted scoring: recency * frequency * keyword relevance
     - Auto-extraction: passive fact detection from conversation
     - Smart recall: only relevant facts injected into prompts
     - Tiered storage: hot/warm/cold with automatic promotion/demotion
@@ -1104,6 +1104,8 @@ class SmartMemory:
         recency_half_life: float = 3600,
         procedural: bool = False,
         eviction_policy: str = "lru-archive",
+        history_limit: int = 1000,
+        redact_keys: Optional[List[str]] = None,
     ):
         self.path = Path(path)
         self.max_chars = max_chars
@@ -1112,16 +1114,22 @@ class SmartMemory:
         self.recency_half_life = recency_half_life
 
         # Core storage
-        self.mem = Memory(
-            max_chars=max_chars, auto_flush_path=str(self.path), eviction_policy=eviction_policy
+        self.mem: Memory = Memory(
+            max_chars=max_chars,
+            auto_flush_path=str(self.path),
+            eviction_policy=eviction_policy,
+            track_history=True,
+            history_limit=history_limit,
+            redact_keys=redact_keys,
         )
-        self.brain = Synapse()
+        self._brain_path = self.path.with_suffix(".brain.json")
+        self.brain: Synapse = Synapse()
 
         # Tiered storage (optional)
-        self.tiered = TieredMemory(path, max_hot_chars=max_chars) if tiered else None
+        self.tiered: Optional[TieredMemory] = TieredMemory(path, max_hot_chars=max_chars) if tiered else None
 
         # Procedural memory (optional)
-        self.procedural = (
+        self.procedural: Optional[ProceduralMemory] = (
             ProceduralMemory(path=str(self.path.with_suffix(".skills.json")))
             if procedural
             else None
@@ -1131,10 +1139,10 @@ class SmartMemory:
         self.forgetting_curve = ForgettingCurve()
 
         # Versioning for tracking memory changes
-        self.versioning = MemoryVersioning()
+        self.versioning: MemoryVersioning = MemoryVersioning()
 
         # Event callbacks for memory changes
-        self._event_callbacks: Dict[str, List[callable]] = {
+        self._event_callbacks: Dict[str, List[Callable]] = {
             "on_set": [],
             "on_delete": [],
             "on_update": [],
@@ -1161,9 +1169,10 @@ class SmartMemory:
         self._active_topics: list[str] = []
         self._turn_count = 0
 
-        # Load metadata
+        # Load metadata and episodes
         self._load_meta()
         self._load_episodes()
+        self._load_brain()
 
         # Initialize meta for existing data
         for p in self.mem.paths():
@@ -1177,14 +1186,14 @@ class SmartMemory:
                 except Exception:
                     pass  # Memory may not support mark_protected if old version
 
-    # ── Core Operations ──────────────────────────────────────────────
+    # -- Core Operations ----------------------------------------------
 
     def remember(
         self,
         path: str,
         value,
-        ttl: int = None,
-        tags: list[str] = None,
+        ttl: Optional[int] = None,
+        tags: Optional[list[str]] = None,
         protected: bool = False,
         check_contradictions: bool = True,
         confidence: float = 1.0,
@@ -1200,7 +1209,7 @@ class SmartMemory:
             check_contradictions: If True, check for contradictions before storing.
             confidence: Confidence in this fact (0.0-1.0). Default 1.0 for explicit facts.
                        Use lower values for auto-extracted or uncertain facts.
-                       Affects recall scoring — lower confidence = lower relevance.
+                       Affects recall scoring -- lower confidence = lower relevance.
 
         Returns:
             Dict with 'success' (bool), 'contradictions' (list), 'warnings' (list),
@@ -1231,7 +1240,7 @@ class SmartMemory:
 
                     # Log contradictions but don't block storage
                     for c in contradictions:
-                        print(f"⚠️  Contradiction detected: {c.explanation}", flush=True)
+                        print(f"!!  Contradiction detected: {c.explanation}", flush=True)
 
             # Store the fact
             old_value = self.mem.get(path)  # Get old value for versioning
@@ -1243,21 +1252,21 @@ class SmartMemory:
                 result["old_value"] = old_value
                 if old_value != value:
                     result["overwritten"] = True
-                    result["warnings"].append(f"Overwrote '{path}': {old_value!r} → {value!r}")
+                    result["warnings"].append(f"Overwrote '{path}': {old_value!r} -> {value!r}")
                     # Increment overwrite count in meta
                     if path in self._meta:
                         self._meta[path].overwrite_count += 1
-
-            # Size guard — warn if value is huge (patch: gap fix)
+            
+            # Size guard -- warn if value is huge
             value_str = json.dumps(value, ensure_ascii=False, default=str)
             if len(value_str) > 2000:
                 result["warnings"].append(
-                    f"Value size {len(value_str)} chars exceeds 2000 — may impact context budget"
+                    f"Value size {len(value_str)} chars exceeds 2000 -- may impact context budget"
                 )
                 if len(value_str) > 5000:
-                    raise ValueError(f"Value too large ({len(value_str)} chars) — max 5000")
+                    raise ValueError(f"Value too large ({len(value_str)} chars) -- max 5000")
             self.mem.set(path, value, ttl=ttl)
-            # Auto-protect user.* identity facts (patch: json-memory gap fix)
+            # Auto-protect user.* identity facts
             if not protected and path.startswith("user."):
                 protected = True
             self._init_meta(
@@ -1436,7 +1445,7 @@ class SmartMemory:
             )
 
     def get_memories_needing_reinforcement(
-        self, max_items: int = 10, memory_type: str = None
+        self, max_items: int = 10, memory_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Get memories that need reinforcement based on forgetting curve.
 
@@ -1618,18 +1627,18 @@ class SmartMemory:
         """Export ALL memory as compact JSON for injection."""
         return self.mem.export()
 
-    # ── Smart Retrieval ──────────────────────────────────────────────
+    # -- Smart Retrieval ----------------------------------------------
 
     def score(
         self,
         path: str,
-        query_tokens: set[str] = None,
-        now: float = None,
-        temporal_intent: dict = None,
-        negation_info: dict = None,
+        query_tokens: Optional[set[str]] = None,
+        now: Optional[float] = None,
+        temporal_intent: Optional[dict] = None,
+        negation_info: Optional[dict] = None,
     ) -> float:
-        """Score a path's relevance. Combines recency × frequency × keyword match
-           × temporal × negation × forgetting strength × confidence.
+        """Score a path's relevance. Combines recency * frequency * keyword match
+           * temporal * negation * forgetting strength * confidence.
 
         Args:
             path: The dotted path to score.
@@ -1642,8 +1651,8 @@ class SmartMemory:
             Float 0.0-1.0 relevance score.
         """
         now = now or time.time()
-        meta = self._meta.get(path)
-        if not meta:
+        meta: PathMeta | None = self._meta.get(path)
+        if meta is None:
             return 0.0
 
         # Recency: exponential decay
@@ -1730,9 +1739,9 @@ class SmartMemory:
 
     def prompt_context(
         self,
-        query: str = None,
-        max_results: int = None,
-        max_tokens: int = None,
+        query: Optional[str] = None,
+        max_results: Optional[int] = None,
+        max_tokens: Optional[int] = None,
         chars_per_token: float = 4.0,
         format_fn=None,
     ) -> str:
@@ -1784,9 +1793,9 @@ class SmartMemory:
 
         return "## Memory\n" + "\n".join(lines)
 
-    # ── Auto-Extraction ──────────────────────────────────────────────
+    # -- Auto-Extraction ----------------------------------------------
 
-    def process_conversation(self, user_msg: str, agent_msg: str = None) -> list[dict]:
+    def process_conversation(self, user_msg: str, agent_msg: Optional[str] = None) -> list[dict]:
         """Passively extract and store facts from conversation.
 
         Detects factual statements without explicit remember() calls.
@@ -1837,7 +1846,7 @@ class SmartMemory:
                     if existing != value:
                         self.remember(path, value, tags=["auto_extracted"], confidence=confidence)
 
-        # Auto-detect topic and log episode (passive — no manual call needed)
+        # Auto-detect topic and log episode (passive -- no manual call needed)
         topic = self._detect_topic(text)
         if topic:
             related_paths = [e["path"] for e in extracted] if extracted else []
@@ -1858,7 +1867,7 @@ class SmartMemory:
         tokens = set(re.findall(r"\w{3,}", text.lower()))
 
         # Score each known topic category
-        topic_scores = {}
+        topic_scores: dict[str, int] = {}
         for token in tokens:
             category = get_concept_category(token)
             if category:
@@ -1872,13 +1881,13 @@ class SmartMemory:
                         topic_scores[token] = topic_scores.get(token, 0) + 1
 
         if topic_scores:
-            best_topic = max(topic_scores, key=topic_scores.get)
+            best_topic = max(topic_scores, key=lambda k: topic_scores[k])
             if topic_scores[best_topic] >= 2:  # at least 2 matches
                 return best_topic
 
         return None
 
-    def _summarize_turn(self, user_msg: str, agent_msg: str = None) -> str:
+    def _summarize_turn(self, user_msg: str, agent_msg: Optional[str] = None) -> str:
         """Create a brief summary of the conversation turn for episode logging."""
         # Truncate to first meaningful sentence
         msg = user_msg.strip().split(".")[0].split("\n")[0]
@@ -1897,9 +1906,9 @@ class SmartMemory:
             return "user.preferences"
         return "user.notes"
 
-    # ── Episodic Memory ──────────────────────────────────────────────
+    # -- Episodic Memory ----------------------------------------------
 
-    def log_episode(self, topic: str, summary: str = None, paths: list[str] = None):
+    def log_episode(self, topic: str, summary: Optional[str] = None, paths: Optional[list[str]] = None):
         """Log a conversation episode for timeline-based recall.
 
         Use this to track what was discussed, so later queries like
@@ -1932,7 +1941,7 @@ class SmartMemory:
             self._save_episodes()
 
     def recall_episodes(
-        self, topic: str = None, max_age_seconds: float = 86400, limit: int = 5
+        self, topic: Optional[str] = None, max_age_seconds: float = 86400, limit: int = 5
     ) -> list[dict]:
         """Find past conversation episodes by topic or recency.
 
@@ -1981,12 +1990,12 @@ class SmartMemory:
         """Call once per conversation turn. Tracks session context."""
         self._turn_count += 1
 
-    # ── Hybrid Fallback ──────────────────────────────────────────────
+    # -- Hybrid Fallback ----------------------------------------------
 
     def recall_relevant(
         self,
-        query: str = None,
-        max_results: int = None,
+        query: Optional[str] = None,
+        max_results: Optional[int] = None,
         min_score: float = 0.1,
         fallback: bool = True,
     ) -> dict:
@@ -2038,7 +2047,7 @@ class SmartMemory:
                 adaptive_threshold = max(min_score, max_keyword * 0.4)
                 scored = [(s, p, m) for s, p, m in scored if s >= adaptive_threshold]
             elif fallback and self._active_topics:
-                # No strong matches — boost paths related to active topics
+                # No strong matches -- boost paths related to active topics
                 scored = self._boost_by_active_topics(scored, query_tokens, now)
                 scored = [(s, p, m) for s, p, m in scored if s >= min_score * 0.5]
             else:
@@ -2056,7 +2065,9 @@ class SmartMemory:
 
         return result
 
-    def _boost_by_active_topics(self, scored, query_tokens, now):
+    def _boost_by_active_topics(
+        self, scored: list[tuple[float, str, PathMeta | None]], query_tokens: set[str], now: float
+    ) -> list[tuple[float, str, PathMeta | None]]:
         """When keyword match is weak, boost paths related to active session topics."""
         # Get tokens from active topics
         topic_tokens = set()
@@ -2072,13 +2083,13 @@ class SmartMemory:
             boosted.append((score, path, meta))
         return boosted
 
-    # ── Context Window Manager ───────────────────────────────────────
+    # -- Context Window Manager ---------------------------------------
 
     def build_context(
         self,
-        query: str = None,
+        query: Optional[str] = None,
         max_chars: int = 2000,
-        max_tokens: int = None,
+        max_tokens: Optional[int] = None,
         chars_per_token: float = 4.0,
         include_episodes: bool = True,
     ) -> str:
@@ -2142,17 +2153,70 @@ class SmartMemory:
 
         return "\n\n".join(parts)
 
-    # ── Associative Memory ───────────────────────────────────────────
+    def to_openai_messages(
+        self, query: Optional[str] = None, role: str = "system", **kwargs
+    ) -> List[Dict[str, str]]:
+        """Format memory context for OpenAI API.
 
-    def link(self, concept: str, associations: list[str], weights: dict = None):
+        Args:
+            query: Optional query to find relevant context.
+            role: The role for the message (default "system").
+            **kwargs: Arguments passed to build_context.
+        """
+        context = self.build_context(query=query, **kwargs)
+        return [{"role": role, "content": f"Memory Context:\n{context}"}]
+
+    def to_anthropic_messages(
+        self, query: Optional[str] = None, **kwargs
+    ) -> List[Dict[str, str]]:
+        """Format memory context for Anthropic (Claude) API.
+
+        Args:
+            query: Optional query to find relevant context.
+            **kwargs: Arguments passed to build_context.
+        """
+        context = self.build_context(query=query, **kwargs)
+        # Anthropic prefers context in the first user message or system parameter
+        return [{"role": "user", "content": f"Relevant context from my memory:\n{context}"}]
+
+    def to_gemini_content(self, query: Optional[str] = None, **kwargs) -> List[Dict[str, Any]]:
+        """Format memory context for Google Gemini API.
+
+        Args:
+            query: Optional query to find relevant context.
+            **kwargs: Arguments passed to build_context.
+        """
+        context = self.build_context(query=query, **kwargs)
+        return [{"role": "user", "parts": [{"text": f"Background Context:\n{context}"}]}]
+
+    def to_messages(
+        self, provider: str, query: Optional[str] = None, **kwargs
+    ) -> List[Dict[str, Any]]:
+        """Generic formatter for multiple LLM providers.
+
+        Supported providers: 'openai', 'anthropic', 'claude', 'gemini', 'google'.
+        """
+        p = provider.lower()
+        if p == "openai":
+            return self.to_openai_messages(query=query, **kwargs)
+        if p in ("anthropic", "claude"):
+            return self.to_anthropic_messages(query=query, **kwargs)
+        if p in ("gemini", "google"):
+            return self.to_gemini_content(query=query, **kwargs)
+        raise ValueError(f"Unsupported provider: {provider}")
+
+    # -- Associative Memory -------------------------------------------
+
+    def link(self, concept: str, associations: list[str], weights: Optional[dict] = None):
         """Create concept associations for associative recall."""
         self.brain.link(concept, associations, weights=weights)
+        self._save_brain()
 
     def associate(self, concept: str, depth: int = 1) -> list[str]:
         """Recall associated concepts."""
         return self.brain.activate(concept, depth=depth)
 
-    # ── Snapshots ────────────────────────────────────────────────────
+    # -- Snapshots ----------------------------------------------------
 
     def snapshot(self, label: str):
         """Save state before risky operations."""
@@ -2237,7 +2301,7 @@ class SmartMemory:
         """
         return self.mem.merge_from_file(path, prefix=prefix, conflict=conflict)
 
-    def merge_from(self, other, conflict_strategy: str = "keep_newer") -> dict:
+    def merge_from(self, other: SmartMemory | dict[str, Any], conflict_strategy: str = "keep_newer") -> dict[str, Any]:
         """Merge another SmartMemory instance into this one.
 
         Transfers facts, metadata, and handles path conflicts.
@@ -2303,7 +2367,7 @@ class SmartMemory:
                     existing_value = self.mem.get(path)
 
                     if existing_value is None:
-                        # No conflict — direct merge
+                        # No conflict -- direct merge
                         self.remember(
                             path,
                             other_value,
@@ -2376,12 +2440,12 @@ class SmartMemory:
 
         return result
 
-    # ── Stats & Debug ────────────────────────────────────────────────
+    # -- Stats & Debug ------------------------------------------------
 
-    def knowledge_summary(self, topic: str = None, group_by: str = "prefix") -> dict:
+    def knowledge_summary(self, topic: Optional[str] = None, group_by: str = "prefix") -> dict:
         """Get a structured overview of what's stored in memory.
 
-        Solves: "what do I know about X?" — returns facts grouped by topic/prefix.
+        Solves: "what do I know about X?" -- returns facts grouped by topic/prefix.
 
         Args:
             topic: Filter by topic keyword (matches against path and value).
@@ -2583,7 +2647,7 @@ class SmartMemory:
                 "timestamp": time.time(),
             }
 
-    def estimate_size(self, value) -> int:
+    def estimate_size(self, value: Any) -> int:
         """Estimate the JSON character size of a value.
 
         Args:
@@ -2630,7 +2694,7 @@ class SmartMemory:
         """
         return self.mem.suggest_budget(target_facts, avg_value_size)
 
-    def estimate_tokens(self, text: str = None, chars_per_token: float = 4.0) -> dict:
+    def estimate_tokens(self, text: Optional[str] = None, chars_per_token: float = 4.0) -> dict:
         """Estimate token count for text or entire memory.
 
         Args:
@@ -2664,9 +2728,9 @@ class SmartMemory:
         """
         return visualize_memory(self, format)
 
-    # ── Event System ──────────────────────────────────────────────
+    # -- Event System ----------------------------------------------
 
-    def on(self, event: str, callback: callable) -> "SmartMemory":
+    def on(self, event: str, callback: Callable) -> "SmartMemory":
         """Register an event callback.
 
         Args:
@@ -2684,7 +2748,7 @@ class SmartMemory:
         self._event_callbacks[event].append(callback)
         return self
 
-    def off(self, event: str, callback: callable = None) -> "SmartMemory":
+    def off(self, event: str, callback: Optional[Callable] = None) -> "SmartMemory":
         """Unregister an event callback.
 
         Args:
@@ -2714,9 +2778,9 @@ class SmartMemory:
             except Exception as e:
                 print(f"Event callback error ({event}): {e}", flush=True)
 
-    # ── Versioning ────────────────────────────────────────────────
+    # -- Versioning ------------------------------------------------
 
-    def get_history(self, path: str = None, limit: int = 100) -> list:
+    def get_history(self, path: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
         """Get version history for a path or all paths.
 
         Args:
@@ -2782,7 +2846,7 @@ class SmartMemory:
             "timestamp_new": diff.timestamp_new,
         }
 
-    def get_recent_changes(self, seconds: float = 3600, limit: int = 100) -> list:
+    def get_recent_changes(self, seconds: float = 3600, limit: int = 100) -> list[dict[str, Any]]:
         """Get recent changes within time window.
 
         Args:
@@ -2794,7 +2858,7 @@ class SmartMemory:
         """
         return self.get_history(limit=limit)
 
-    def get_most_changed(self, limit: int = 10, seconds: float = None) -> List[Tuple[str, int]]:
+    def get_most_changed(self, limit: int = 10, seconds: Optional[float] = None) -> List[Tuple[str, int]]:
         """Get most frequently changed paths.
 
         Args:
@@ -2806,9 +2870,9 @@ class SmartMemory:
         """
         return self.versioning.get_most_changed(limit=limit, seconds=seconds)
 
-    # ── Encryption ────────────────────────────────────────────────
+    # -- Encryption ------------------------------------------------
 
-    def enable_encryption(self, master_key: str = None) -> "SmartMemory":
+    def enable_encryption(self, master_key: Optional[str] = None) -> "SmartMemory":
         """Enable encryption for sensitive data.
 
         Args:
@@ -2852,7 +2916,7 @@ class SmartMemory:
 
         return result
 
-    def recall_decrypted(self, path: str, default: Any = None) -> Any:
+    def recall_decrypted(self, path: str, default: Optional[Any] = None) -> Any:
         """Retrieve and decrypt a fact.
 
         Args:
@@ -2895,7 +2959,7 @@ class SmartMemory:
 
         return self.encryption.is_encrypted(value)
 
-    # ── Advanced Search ───────────────────────────────────────────
+    # -- Advanced Search -------------------------------------------
 
     def search_regex(
         self, pattern: str, field: str = "both", case_sensitive: bool = False
@@ -3006,9 +3070,9 @@ class SmartMemory:
         """
         return self.search_engine.suggest(partial, limit)
 
-    # ── Private Helpers ────────────────────────────────────────────
+    # -- Private Helpers --------------------------------------------
 
-    def explain_score(self, path: str, query: str = None) -> dict:
+    def explain_score(self, path: str, query: Optional[str] = None) -> dict:
         """Debug: show how a path's score is calculated."""
         meta = self._meta.get(path)
         if not meta:
@@ -3045,9 +3109,9 @@ class SmartMemory:
             "tier": meta.tier,
         }
 
-    # ── Procedural Memory Operations ─────────────────────────────────
+    # -- Procedural Memory Operations ---------------------------------
 
-    def learn(self, experience: str, domain: str = None, extract_principles: bool = True) -> dict:
+    def learn(self, experience: str, domain: Optional[str] = None, extract_principles: bool = True) -> dict:
         """Extract principles and skills from an experience.
 
         Args:
@@ -3091,7 +3155,7 @@ class SmartMemory:
 
             return result
 
-    def transfer(self, new_situation: str, domain: str = None) -> dict:
+    def transfer(self, new_situation: str, domain: Optional[str] = None) -> dict:
         """Find skills that might transfer to a new situation.
 
         Args:
@@ -3101,7 +3165,8 @@ class SmartMemory:
         Returns:
             Dict with transferable skills and how they apply
         """
-        if not self.procedural:
+        procedural = self.procedural
+        if not procedural:
             return {"error": "Procedural memory not enabled. Initialize with procedural=True"}
 
         with self._lock:
@@ -3109,7 +3174,7 @@ class SmartMemory:
             keywords = set(re.findall(r"\w{3,}", new_situation.lower()))
 
             # Find transferable skills
-            skills = self.procedural.find_transferable_skills(
+            skills = procedural.find_transferable_skills(
                 new_domain=domain, context_keywords=keywords
             )
 
@@ -3134,7 +3199,7 @@ class SmartMemory:
 
             return result
 
-    def apply_skill(self, skill_name: str, new_domain: str = None, outcome: str = None) -> bool:
+    def apply_skill(self, skill_name: str, new_domain: Optional[str] = None, outcome: Optional[str] = None) -> bool:
         """Record that a skill was applied (strengthens it).
 
         Args:
@@ -3180,18 +3245,18 @@ class SmartMemory:
 
         return self.procedural.competence_map()
 
-    def _explain_transfer(self, skill, new_situation: str) -> str:
+    def _explain_transfer(self, skill: Skill, new_situation: str) -> str:
         """Explain how a skill might transfer to a new situation."""
         # Simplified explanation - in production, use LLM
         return f"The principle '{skill.principle}' applies because it addresses the core concept of {skill.name.replace('_', ' ')}."
 
-    # ── Memory Lifecycle & Pruning ────────────────────────────────────
+    # -- Memory Lifecycle & Pruning ------------------------------------
 
     def prune(
         self,
-        max_age_seconds: int = None,
-        min_access_count: int = None,
-        max_total_chars: int = None,
+        max_age_seconds: Optional[int] = None,
+        min_access_count: Optional[int] = None,
+        max_total_chars: Optional[int] = None,
         dry_run: bool = False,
     ) -> dict:
         """Remove expired, unused, or oversized memory entries.
@@ -3216,7 +3281,7 @@ class SmartMemory:
             archived = []
             skipped_protected = []
 
-            # 1. Remove expired facts (TTL exceeded) — even protected facts can expire
+            # 1. Remove expired facts (TTL exceeded) -- even protected facts can expire
             for path in list(self._meta.keys()):
                 meta = self._meta[path]
                 if meta.expires_at and now > meta.expires_at:
@@ -3229,7 +3294,7 @@ class SmartMemory:
                         del self._meta[path]
                     expired.append(path)
 
-            # 2. Remove old facts (age-based pruning) — skip protected
+            # 2. Remove old facts (age-based pruning) -- skip protected
             if max_age_seconds:
                 for path in list(self._meta.keys()):
                     if path in expired:  # Skip already expired
@@ -3252,7 +3317,7 @@ class SmartMemory:
                             del self._meta[path]
                         removed.append(path)
 
-            # 3. Remove rarely accessed facts (frequency-based pruning) — skip protected
+            # 3. Remove rarely accessed facts (frequency-based pruning) -- skip protected
             if min_access_count:
                 for path in list(self._meta.keys()):
                     if path in expired or path in removed:  # Skip already processed
@@ -3275,7 +3340,7 @@ class SmartMemory:
                             del self._meta[path]
                         removed.append(path)
 
-            # 4. Size-based pruning (if total exceeds limit) — skip protected
+            # 4. Size-based pruning (if total exceeds limit) -- skip protected
             if max_total_chars:
                 total_chars = 0
                 for path in self.mem.paths():
@@ -3312,7 +3377,7 @@ class SmartMemory:
                             removed.append(path)
                             chars_removed += value_chars
 
-            # 5. Archive old facts to cold storage (if tiered enabled) — skip protected
+            # 5. Archive old facts to cold storage (if tiered enabled) -- skip protected
             if self.tiered:
                 for path in list(self._meta.keys()):
                     if path in expired or path in removed:
@@ -3420,10 +3485,10 @@ class SmartMemory:
 
     def cold_search(
         self,
-        query: str = None,
-        path_pattern: str = None,
-        older_than: float = None,
-        newer_than: float = None,
+        query: Optional[str] = None,
+        path_pattern: Optional[str] = None,
+        older_than: Optional[float] = None,
+        newer_than: Optional[float] = None,
     ) -> list[dict]:
         """Search cold storage for archived facts.
 
@@ -3476,7 +3541,7 @@ class SmartMemory:
                 self._save_meta()
             return result
 
-    def purge_cold(self, older_than: float = None, keep_last: int = None) -> dict:
+    def purge_cold(self, older_than: Optional[float] = None, keep_last: Optional[int] = None) -> dict:
         """Permanently delete old facts from cold storage.
 
         Args:
@@ -3617,15 +3682,15 @@ class SmartMemory:
                 "warning_count": len(warnings),
             }
 
-    # ── Internal ─────────────────────────────────────────────────────
+    # -- Internal -----------------------------------------------------
 
     def _init_meta(
         self,
         path: str,
         value,
-        ttl: int = None,
+        ttl: Optional[int] = None,
         protected: bool = False,
-        tags: list[str] = None,
+        tags: Optional[list[str]] = None,
         confidence: float = 1.0,
     ):
         """Initialize or update metadata for a path."""
@@ -3710,25 +3775,42 @@ class SmartMemory:
         try:
             raw = {}
             for path, meta in self._meta.items():
-                raw[path] = (
-                    {
-                        "last_accessed": meta.last_accessed,
-                        "access_count": meta.access_count,
-                        "created_at": meta.created_at,
-                        "tier": meta.tier,
-                        "tokens": sorted(meta.tokens),
-                        "ttl": meta.ttl,
-                        "expires_at": meta.expires_at,
-                        "archived": meta.archived,
-                        "size_bytes": meta.size_bytes,
-                        "protected": meta.protected,
-                        "tags": meta.tags,
-                        "confidence": meta.confidence,
-                        "overwrite_count": meta.overwrite_count,
-                    },
-                )
+                raw[path] = {
+                    "last_accessed": meta.last_accessed,
+                    "access_count": meta.access_count,
+                    "created_at": meta.created_at,
+                    "tier": meta.tier,
+                    "tokens": sorted(meta.tokens),
+                    "ttl": meta.ttl,
+                    "expires_at": meta.expires_at,
+                    "archived": meta.archived,
+                    "size_bytes": meta.size_bytes,
+                    "protected": meta.protected,
+                    "tags": meta.tags,
+                    "confidence": meta.confidence,
+                    "overwrite_count": meta.overwrite_count,
+                }
             self._meta_path.parent.mkdir(parents=True, exist_ok=True)
             self._meta_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _load_brain(self):
+        """Load associative brain state from disk."""
+        if self._brain_path.exists():
+            try:
+                data = json.loads(self._brain_path.read_text(encoding="utf-8"))
+                self.brain = Synapse.from_dict(data)
+            except Exception:
+                pass
+
+    def _save_brain(self):
+        """Save associative brain state to disk."""
+        try:
+            self._brain_path.parent.mkdir(parents=True, exist_ok=True)
+            self._brain_path.write_text(
+                json.dumps(self.brain.to_dict(), ensure_ascii=False), encoding="utf-8"
+            )
         except Exception:
             pass
 

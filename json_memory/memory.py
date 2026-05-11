@@ -87,8 +87,7 @@ class Memory:
         # Initial access tracking for existing data
         if self._data:
             with self._lock:
-                for path in self.paths():
-                    self._track_access(path)
+                self._track_all_access(self._data)
 
     def watch(
         self, path: str, callback: Callable[[str, Any], None], exact: bool = False
@@ -222,8 +221,7 @@ class Memory:
             q = query if case_sensitive else query.lower()
             matches = {}
 
-            for path in self.paths():
-                value = self.get(path)
+            for path, value in self.items():
                 if value is None:
                     continue
 
@@ -1266,6 +1264,18 @@ class Memory:
                 redacted[k] = v
         return redacted
 
+    def _track_all_access(self, node: Any, prefix: str = ""):
+        """Internal: recursively track access for a node and all descendants in a single pass."""
+        now = time.time()
+        def _track(n, p):
+            if p:
+                self._access_times[p] = now
+            if isinstance(n, dict):
+                for k, v in n.items():
+                    child = f"{p}.{k}" if p else k
+                    _track(v, child)
+        _track(node, prefix)
+
     def _track_access(self, path: str):
         """Internal: record access time for a path and its parents."""
         now = time.time()
@@ -1275,19 +1285,71 @@ class Memory:
             current = f"{current}.{key}" if current else key
             self._access_times[current] = now
 
+    def _paths_recursive(self, current_node: Any, current_prefix: str, results: list) -> None:
+        """Internal: recursively collect leaf paths."""
+        if isinstance(current_node, dict):
+            for k, v in current_node.items():
+                full_path = f"{current_prefix}.{k}" if current_prefix else k
+                if isinstance(v, dict):
+                    self._paths_recursive(v, full_path, results)
+                else:
+                    results.append(full_path)
+
+    def _items_recursive(self, current_node: Any, current_prefix: str, results: list) -> None:
+        """Internal: recursively collect leaf (path, value) tuples."""
+        if isinstance(current_node, dict):
+            for k, v in current_node.items():
+                full_path = f"{current_prefix}.{k}" if current_prefix else k
+                if isinstance(v, dict):
+                    self._items_recursive(v, full_path, results)
+                else:
+                    results.append((full_path, v))
+
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""
         with self._lock:
-            results = []
-            node = self.get(prefix) if prefix else self._data
-            if isinstance(node, dict):
-                for key, value in node.items():
-                    full_path = f"{prefix}.{key}" if prefix else key
-                    if isinstance(value, dict):
-                        results.extend(self.paths(full_path))
-                    else:
-                        results.append(full_path)
+            node = self.get(prefix, _MISSING) if prefix else self._data
+            if node is _MISSING:
+                return []
+            results = self._paths_recursive(node, prefix)
             return sorted(results)
+
+    def _paths_recursive(self, node: Any, prefix: str) -> list:
+        """Internal recursive helper for paths()."""
+        results = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                full_path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    results.extend(self._paths_recursive(value, full_path))
+                else:
+                    results.append(full_path)
+        elif prefix:
+            results.append(prefix)
+        return results
+
+    def items(self, prefix: str = "") -> list:
+        """List all (path, value) pairs in the memory tree."""
+        with self._lock:
+            node = self.get(prefix, _MISSING) if prefix else self._data
+            if node is _MISSING:
+                return []
+            results = self._items_recursive(node, prefix)
+            return sorted(results)
+
+    def _items_recursive(self, node: Any, prefix: str) -> list:
+        """Internal recursive helper for items()."""
+        results = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                full_path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    results.extend(self._items_recursive(value, full_path))
+                else:
+                    results.append((full_path, value))
+        elif prefix:
+            results.append((prefix, node))
+        return results
 
     def history(self) -> list[dict]:
         """Return a copy of the mutation audit log."""

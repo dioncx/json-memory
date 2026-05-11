@@ -142,8 +142,7 @@ def enhance_smart_memory(smart_mem, model_name: str = "all-MiniLM-L6-v2"):
         return smart_mem
 
     # Index all existing paths
-    for path in smart_mem.mem.paths():
-        val = smart_mem.mem.get(path)
+    for path, val in smart_mem.mem.items():
         text = f"{path}: {_value_to_text(val)}"
         index.add(path, text)
 
