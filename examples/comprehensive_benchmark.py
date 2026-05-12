@@ -109,11 +109,11 @@ def scenario_1_basic_storage():
         smart_stats = smart.stats()
 
         return {
-            "Legacy chars": legacy_stats["chars_used"],
-            "Smart chars": smart_stats["chars_used"],
-            "Savings": f"{(1 - smart_stats['chars_used'] / legacy_stats['chars_used']) * 100:.1f}%",
-            "Legacy entries": legacy_stats["entries"],
-            "Smart entries": smart_stats["entries"],
+            "Legacy chars": str(legacy_stats["chars_used"]),
+            "Smart chars": str(smart_stats["chars_used"]),
+            "Savings": str(round((1 - smart_stats['chars_used'] / (legacy_stats['chars_used'] or 1)) * 100, 1)) + "%",
+            "Legacy entries": str(legacy_stats["entries"]),
+            "Smart entries": str(smart_stats["entries"]),
         }
 
     return benchmark_scenario("Basic Storage", "Store 14 common agent facts", setup, test)
@@ -168,16 +168,28 @@ def scenario_2_query_retrieval():
             relevant_count = len(smart_result.split("\n")) - 1  # Subtract header
             smart_relevant += relevant_count
 
-        avg_legacy = legacy_chars / len(queries)
-        avg_smart = smart_chars / len(queries)
+        avg_legacy = legacy_chars / len(queries) if queries else 0
+        avg_smart = smart_chars / len(queries) if queries else 0
+
+        # Calculate precision improvement safely
+        l_facts = legacy_relevant / len(queries) if queries else 0
+        s_facts = smart_relevant / len(queries) if queries else 0
+        
+        precision_impr = 0.0
+        if s_facts > 0:
+            precision_impr = l_facts / s_facts
+            
+        token_savings = 0.0
+        if avg_legacy > 0:
+            token_savings = (1 - avg_smart / avg_legacy) * 100
 
         return {
             "Avg legacy injection": f"{avg_legacy:.0f} chars",
             "Avg smart injection": f"{avg_smart:.0f} chars",
-            "Token savings": f"{(1 - avg_smart / avg_legacy) * 100:.1f}%",
-            "Legacy facts per query": f"{legacy_relevant / len(queries):.1f}",
-            "Smart facts per query": f"{smart_relevant / len(queries):.1f}",
-            "Precision improvement": f"{(legacy_relevant / len(queries)) / (smart_relevant / len(queries)):.1f}x more precise",
+            "Token savings": f"{token_savings:.1f}%",
+            "Legacy facts per query": f"{l_facts:.1f}",
+            "Smart facts per query": f"{s_facts:.1f}",
+            "Precision improvement": f"{precision_impr:.1f}x more precise",
         }
 
     return benchmark_scenario(
@@ -206,13 +218,21 @@ def scenario_3_memory_growth():
         legacy_result = legacy.prompt_context(query)
         smart_result = smart.prompt_context(query)
 
+        growth_ratio = 0.0
+        if smart_stats["chars_used"] > 0:
+            growth_ratio = legacy_stats["chars_used"] / smart_stats["chars_used"]
+            
+        query_efficiency = 0.0
+        if len(legacy_result) > 0:
+            query_efficiency = (1 - len(smart_result) / (len(legacy_result) or 1)) * 100
+
         return {
-            "Legacy chars (50 facts)": legacy_stats["chars_used"],
-            "Smart chars (50 facts)": smart_stats["chars_used"],
-            "Growth ratio": f"{legacy_stats['chars_used'] / smart_stats['chars_used']:.1f}x",
-            "Legacy query size": len(legacy_result),
-            "Smart query size": len(smart_result),
-            "Query efficiency": f"{(1 - len(smart_result) / len(legacy_result)) * 100:.1f}%",
+            "Legacy chars (50 facts)": str(legacy_stats["chars_used"]),
+            "Smart chars (50 facts)": str(smart_stats["chars_used"]),
+            "Growth ratio": str(round(growth_ratio, 1)) + "x",
+            "Legacy query size": str(len(legacy_result)),
+            "Smart query size": str(len(smart_result)),
+            "Query efficiency": str(round(query_efficiency, 1)) + "%",
         }
 
     return benchmark_scenario("Memory Growth", "50 conversation turns, measure growth", setup, test)
@@ -249,33 +269,47 @@ def scenario_4_complex_queries():
             legacy.remember(path, value)
             smart.remember(path, value, check_contradictions=False)
 
-    def test(legacy, smart):
-        queries = [
+    def test(legacy_prov, smart_prov):
+        scen4_queries = [
             "Who am I and what do I do?",
             "How does the bot work?",
             "What's the deployment process?",
             "What monitoring is in place?",
             "What are the API credentials?",
         ]
+        test_results = {}
+        for idx, q_text in enumerate(scen4_queries):
+            l_context = legacy_prov.prompt_context(q_text)
+            s_context = smart_prov.prompt_context(q_text)
 
-        results = {}
-        for i, query in enumerate(queries):
-            legacy_ctx = legacy.prompt_context(query)
-            smart_ctx = smart.prompt_context(query)
+            q_num = idx + 1
+            test_results["Q" + str(q_num) + " legacy chars"] = str(len(l_context))
+            test_results["Q" + str(q_num) + " smart chars"] = str(len(s_context))
+            
+            s_val = 0.0
+            l_len = len(l_context)
+            if l_len > 0:
+                s_val = (1.0 - (len(s_context) / float(l_len))) * 100.0
+            
+            test_results["Q" + str(q_num) + " savings"] = str(int(s_val)) + "%"
 
-            results[f"Q{i+1} legacy chars"] = len(legacy_ctx)
-            results[f"Q{i+1} smart chars"] = len(smart_ctx)
-            results[f"Q{i+1} savings"] = f"{(1 - len(smart_ctx) / len(legacy_ctx)) * 100:.0f}%"
+        # Average savings calculation
+        s_list = []
+        for q_item in scen4_queries:
+            l_c = len(legacy_prov.prompt_context(q_item))
+            s_c = len(smart_prov.prompt_context(q_item))
+            sv = 0.0
+            if l_c > 0:
+                sv = (1.0 - (s_c / float(l_c))) * 100.0
+            s_list.append(sv)
 
-        # Average savings
-        avg_savings = sum(
-            (1 - len(smart.prompt_context(q)) / len(legacy.prompt_context(q))) * 100
-            for q in queries
-        ) / len(queries)
+        avg_v = 0.0
+        if len(scen4_queries) > 0:
+            avg_v = sum(s_list) / float(len(scen4_queries))
+            
+        test_results["Average savings"] = str(round(avg_v, 1)) + "%"
 
-        results["Average savings"] = f"{avg_savings:.1f}%"
-
-        return results
+        return test_results
 
     return benchmark_scenario("Complex Queries", "5 complex natural language queries", setup, test)
 
@@ -309,10 +343,10 @@ def scenario_5_auto_extraction():
             smart_extracted += len(smart_result)
 
         return {
-            "Conversations": len(conversations),
-            "Legacy extractions": legacy_extracted,
-            "Smart extractions": smart_extracted,
-            "Extraction efficiency": f"{smart_extracted}x more facts extracted",
+            "Conversations": str(len(conversations)),
+            "Legacy extractions": str(legacy_extracted),
+            "Smart extractions": str(smart_extracted),
+            "Extraction efficiency": str(smart_extracted) + "x more facts extracted",
             "Smart features": "Auto-stores user.name, user.location, user.preferences, user.timezone, user.email, user.requested",
         }
 
@@ -343,11 +377,11 @@ def scenario_6_memory_maintenance():
 
         # Test contradiction detection
         contradictions = smart.get_contradictions()
-        results["Contradictions found"] = len(contradictions)
+        results["Contradictions found"] = str(len(contradictions))
 
         # Test consolidation
         groups = smart.consolidate_memory()
-        results["Consolidation groups"] = len(groups)
+        results["Consolidation groups"] = str(len(groups))
 
         # Test forgetting curve
         strength = smart.get_memory_strength("fact.0")
@@ -437,18 +471,18 @@ def scenario_7_real_world_simulation():
             total_legacy_chars += len(legacy_ctx)
             total_smart_chars += len(smart_ctx)
 
-        avg_legacy = total_legacy_chars / len(queries)
-        avg_smart = total_smart_chars / len(queries)
+        avg_legacy = total_legacy_chars / len(queries) if queries else 0
+        avg_smart = total_smart_chars / len(queries) if queries else 0
 
         return {
-            "Total queries": len(queries),
-            "Avg legacy injection": f"{avg_legacy:.0f} chars",
-            "Avg smart injection": f"{avg_smart:.0f} chars",
-            "Token savings": f"{(1 - avg_smart / avg_legacy) * 100:.1f}%",
-            "Smart auto-extracted": f"{len(smart.mem.paths())} facts",
+            "Total queries": str(len(queries)),
+            "Avg legacy injection": str(round(avg_legacy, 0)) + " chars",
+            "Avg smart injection": str(round(avg_smart, 0)) + " chars",
+            "Token savings": str(round((1 - avg_smart / avg_legacy) * 100, 1)) + "%",
+            "Smart auto-extracted": str(len(smart.mem.paths())) + " facts",
             "Legacy auto-extracted": "0 facts (no auto-extraction)",
-            "Smart total facts": len(smart.mem.paths()),
-            "Legacy total facts": len(legacy.facts),
+            "Smart total facts": str(len(smart.mem.paths())),
+            "Legacy total facts": str(len(legacy.facts)),
         }
 
     return benchmark_scenario(

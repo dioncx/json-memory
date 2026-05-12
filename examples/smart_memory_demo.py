@@ -77,7 +77,7 @@ def main():
     print(f"\n  ✅ Smart injection: {len(smart_context)} chars")
     print(f"     {smart_context}")
 
-    savings = 1 - len(smart_context) / len(full_context)
+    savings = 1 - len(smart_context) / len(full_context) if len(full_context) > 0 else 0
     print(f"\n  💰 Token savings: {savings:.0%}")
 
     # ── 4. Auto-extraction ───────────────────────────────────────
