@@ -1224,59 +1224,26 @@ class SmartMemory:
                 "old_value": None,
                 "is_new": True,
             }
-
-            # Check for contradictions if requested
             if check_contradictions:
-                existing_facts = {}
-                for existing_path in self.mem.paths():
-                    existing_value = self.mem.get(existing_path)
-                    if existing_value is not None:
-                        existing_facts[existing_path] = existing_value
-
-                contradictions = detect_contradictions(path, value, existing_facts)
-                if contradictions:
-                    result["contradictions"] = contradictions
-                    result["warnings"].append(f"Found {len(contradictions)} contradiction(s)")
-
-                    # Log contradictions but don't block storage
-                    for c in contradictions:
-                        print(f"!!  Contradiction detected: {c.explanation}", flush=True)
-
-            # Store the fact
-            old_value = self.mem.get(path)  # Get old value for versioning
-            is_new = old_value is None
-
-            # Track overwrite
-            result["is_new"] = is_new
-            if not is_new:
-                result["old_value"] = old_value
-                if old_value != value:
-                    result["overwritten"] = True
-                    result["warnings"].append(f"Overwrote '{path}': {old_value!r} -> {value!r}")
-                    # Increment overwrite count in meta
-                    if path in self._meta:
-                        self._meta[path].overwrite_count += 1
+                self._check_remember_contradictions(path, value, result)
             
-            # Size guard -- warn if value is huge
-            value_str = json.dumps(value, ensure_ascii=False, default=str)
-            if len(value_str) > 2000:
-                result["warnings"].append(
-                    f"Value size {len(value_str)} chars exceeds 2000 -- may impact context budget"
-                )
-                if len(value_str) > 5000:
-                    raise ValueError(f"Value too large ({len(value_str)} chars) -- max 5000")
+            old_value = self.mem.get(path)
+            is_new = old_value is None
+            
+            self._track_remember_overwrite(path, value, old_value, is_new, result)
+            self._guard_remember_size(value, result)
+            
             self.mem.set(path, value, ttl=ttl)
-            # Auto-protect user.* identity facts
-            if not protected and path.startswith("user."):
+
+            if not protected and path.startswith('user.'):
                 protected = True
-            self._init_meta(
-                path, value, ttl=ttl, protected=protected, tags=tags, confidence=confidence
-            )
+
+            self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags, confidence=confidence)
+
             if protected:
                 self.mem.mark_protected(path)
-
             if self.tiered:
-                self.tiered.set(path, value, tier="hot", ttl=ttl)
+                self.tiered.set(path, value, tier='hot', ttl=ttl)
 
             # Auto-link to tags via Synapse
             if tags:
@@ -1284,22 +1251,56 @@ class SmartMemory:
                     self.brain.link(tag, [path])
 
             self._save_meta()
-
-            # Record version
-            operation = "set" if is_new else "update"
-            self.versioning.record_change(
-                path=path,
-                old_value=old_value,
-                new_value=value,
-                operation=operation,
-                metadata={"tags": tags, "protected": protected, "ttl": ttl},
-            )
-
-            # Trigger events
-            self._trigger_event("on_set" if is_new else "on_update", path, old_value, value)
-            self._trigger_event("on_change", path, old_value, value)
+            self._record_remember_version_and_events(path, value, old_value, is_new, tags, protected, ttl)
 
             return result
+
+    def _check_remember_contradictions(self, path: str, value, result: dict):
+        """Check for contradictions and update result dict."""
+        existing_facts = {}
+        for existing_path in self.mem.paths():
+            existing_value = self.mem.get(existing_path)
+            if existing_value is not None:
+                existing_facts[existing_path] = existing_value
+
+        contradictions = detect_contradictions(path, value, existing_facts)
+        if contradictions:
+            result['contradictions'] = contradictions
+            result['warnings'].append(f"Found {len(contradictions)} contradiction(s)")
+            for c in contradictions:
+                print(f"⚠️  Contradiction detected: {c.explanation}", flush=True)
+
+    def _track_remember_overwrite(self, path: str, value, old_value, is_new: bool, result: dict):
+        """Track overwrite metrics and warnings."""
+        result['is_new'] = is_new
+        if not is_new:
+            result['old_value'] = old_value
+            if old_value != value:
+                result['overwritten'] = True
+                result['warnings'].append(f"Overwrote '{path}': {old_value!r} → {value!r}")
+                if path in self._meta:
+                    self._meta[path].overwrite_count += 1
+
+    def _guard_remember_size(self, value, result: dict):
+        """Guard against oversized values."""
+        value_str = json.dumps(value, ensure_ascii=False, default=str)
+        if len(value_str) > 2000:
+            result['warnings'].append(f"Value size {len(value_str)} chars exceeds 2000 — may impact context budget")
+            if len(value_str) > 5000:
+                raise ValueError(f"Value too large ({len(value_str)} chars) — max 5000")
+
+    def _record_remember_version_and_events(self, path: str, value, old_value, is_new: bool, tags: Optional[List[str]], protected: bool, ttl: Optional[int]):
+        """Record version history and trigger events."""
+        operation = 'set' if is_new else 'update'
+        self.versioning.record_change(
+            path=path,
+            old_value=old_value,
+            new_value=value,
+            operation=operation,
+            metadata={'tags': tags, 'protected': protected, 'ttl': ttl}
+        )
+        self._trigger_event('on_set' if is_new else 'on_update', path, old_value, value)
+        self._trigger_event('on_change', path, old_value, value)
 
     def get_contradictions(self) -> list[Contradiction]:
         """Get all contradictions in memory.
