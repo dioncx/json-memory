@@ -271,7 +271,8 @@ class Memory:
             self._invalidate()
 
             # Check budget
-            if len(self.export()) > self.max_chars:
+            current_size = len(self.export())
+            if current_size > self.max_chars:
                 if self.eviction_policy in ("lru", "lru-archive"):
                     # Get all leaf paths, excluding the one we just set
                     all_paths = [p for p in self.paths() if p != path]
@@ -282,8 +283,9 @@ class Memory:
                         if p in self.protected_paths:
                             continue  # Skip protected entry
 
-                        if len(self.export()) <= self.max_chars:
+                        if current_size <= self.max_chars:
                             break
+
                         evicted_value = self.get(p)
 
                         # Archive to cold storage before deleting
@@ -296,11 +298,22 @@ class Memory:
                                 self.on_evict(p, evicted_value)
                             except Exception:
                                 pass  # Don't let callback errors break eviction
+                        
+                        # Track size reduction (conservative estimate)
+                        # "key":value, -> len(key) + len(json(value)) + 4 chars overhead
+                        key_name = p.split(".")[-1]
+                        reduction = self.estimate_size(evicted_value) + len(key_name) + 3
 
-                        self.delete(p, prune=True)
-
+                        if self.delete(p, prune=True):
+                            current_size -= reduction
+                            # If we estimated we are under budget, get precise size
+                            if current_size <= self.max_chars:
+                                current_size = len(self.export())
+                
                 # Final check - if still too large (or policy is "error")
-                if len(self.export()) > self.max_chars:
+                # Re-verify size one last time to be sure
+                current_size = len(self.export())
+                if current_size > self.max_chars:
                     # Rollback to snapshot
                     self._data = snapshot
                     self._invalidate()
