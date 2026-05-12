@@ -17,7 +17,9 @@ from .adapters import StorageAdapter, FileAdapter
 
 class _Missing:
     """Sentinel for get() default — distinguishes 'not found' from 'found None'."""
+
     pass
+
 
 _MISSING = _Missing()
 
@@ -39,12 +41,19 @@ class Memory:
         '{"user":{"name":"Alice"},"bot":{"restart":"kill && nohup ./bot > log"}}'
     """
 
-    def __init__(self, data: Optional[dict] = None, max_chars: int = 2200, 
-                 eviction_policy: str = "error", auto_flush_path: Optional[str] = None,
-                 storage_adapter: Optional[StorageAdapter] = None,
-                 track_history: bool = False, redact_keys: Optional[List[str]] = None,
-                 on_evict: Optional[Callable[[str, Any], None]] = None,
-                 cold_storage_path: Optional[str] = None):
+    def __init__(
+        self,
+        data: Optional[dict] = None,
+        max_chars: int = 2200,
+        eviction_policy: str = "error",
+        auto_flush_path: Optional[str] = None,
+        storage_adapter: Optional[StorageAdapter] = None,
+        track_history: bool = False,
+        redact_keys: Optional[List[str]] = None,
+        on_evict: Optional[Callable[[str, Any], None]] = None,
+        cold_storage_path: Optional[str] = None,
+        history_limit: int = 1000,
+    ):
         self._data = data or {}
         self.max_chars = max_chars
         self.eviction_policy = eviction_policy
@@ -54,7 +63,8 @@ class Memory:
         self.redact_keys = redact_keys or []
         self.on_evict = on_evict
         self.cold_storage_path = cold_storage_path
-        self._cold_store: Optional['Memory'] = None  # Lazy-loaded cold storage
+        self.history_limit = history_limit
+        self._cold_store: Optional["Memory"] = None  # Lazy-loaded cold storage
         self._lock = threading.RLock()
         self._audit_log: list[dict] = []
         self._cache: Optional[str] = None
@@ -63,10 +73,14 @@ class Memory:
         self._snapshots: dict[str, dict] = {}
         self._access_times: dict[str, float] = {}
         self.protected_paths: set[str] = set()  # Patched: tracks protected entries
-        
+
         # Auto-configure adapter if path is given but no adapter provided
         if self.auto_flush_path and not self.storage_adapter:
             self.storage_adapter = FileAdapter(self.auto_flush_path)
+
+        # Load history if tracking is enabled and adapter path exists
+        if self.track_history and self.auto_flush_path:
+            self._load_history()
 
         # Load initial state from adapter if available
         if self.storage_adapter:
@@ -79,10 +93,11 @@ class Memory:
         # Initial access tracking for existing data
         if self._data:
             with self._lock:
-                for path in self.paths():
-                    self._track_access(path)
+                self._track_all_access(self._data)
 
-    def watch(self, path: str, callback: Callable[[str, Any], None], exact: bool = False) -> "Memory":
+    def watch(
+        self, path: str, callback: Callable[[str, Any], None], exact: bool = False
+    ) -> "Memory":
         """Register a callback triggered when path (or sub-path) is modified."""
         with self._lock:
             if path not in self._watchers:
@@ -122,7 +137,6 @@ class Memory:
         """Mark a path as protected from LRU eviction."""
         self.protected_paths.add(path)
 
-
     def get(self, path: str, default: Any = None) -> Any:
         """Get a value by dotted path. Returns default if not found."""
         with self._lock:
@@ -138,7 +152,7 @@ class Memory:
                     node = node[key]
                 else:
                     return default
-            
+
             self._track_access(path)
             return node
 
@@ -150,7 +164,7 @@ class Memory:
             return default
         return result
 
-    def increment(self, path: str, delta: int = 1) -> int:
+    def increment(self, path: str, delta: int = 1) -> Union[int, float]:
         """Atomically increment a numeric value at path (initializes to 0 if missing)."""
         current = self.get(path, 0)
         if not isinstance(current, (int, float)):
@@ -160,7 +174,7 @@ class Memory:
         self._track_access(path)
         return new_val
 
-    def touch(self, path: str, timestamp: float = None) -> "Memory":
+    def touch(self, path: str, timestamp: Optional[float] = None) -> "Memory":
         """Set a timestamp at path. Defaults to time.time()."""
         ts = timestamp if timestamp is not None else time.time()
         return self.set(path, ts)
@@ -171,7 +185,7 @@ class Memory:
 
     def find(self, pattern: str) -> dict:
         """Find paths matching a wildcard pattern.
-        
+
         '*' matches one segment, '**' matches zero or more segments.
         Example: "users.*.status", "**.config"
         """
@@ -179,23 +193,22 @@ class Memory:
         # Escape all characters, then replace wildcard patterns
         regex_pat = re.escape(pattern)
         # ** at start: (?:.*?\.)?
-        regex_pat = regex_pat.replace(r'\*\*\.', r'(?:.*\.)?')
+        regex_pat = regex_pat.replace(r"\*\*\.", r"(?:.*\.)?")
         # ** at end: (?:\..*?)?
-        regex_pat = regex_pat.replace(r'\.\*\*', r'(?:\..*)?')
+        regex_pat = regex_pat.replace(r"\.\*\*", r"(?:\..*)?")
         # ** internal: .*
-        regex_pat = regex_pat.replace(r'\*\*', r'.*')
+        regex_pat = regex_pat.replace(r"\*\*", r".*")
         # * internal: [^.]+
-        regex_pat = regex_pat.replace(r'\*', r'[^.]+')
-        
+        regex_pat = regex_pat.replace(r"\*", r"[^.]+")
+
         regex = re.compile(f"^{regex_pat}$")
-        
+
         matches = [p for p in self.paths() if regex.match(p)]
         for p in matches:
             self._track_access(p)
         return self.batch_get(matches)
 
-    def search_value(self, query: str, case_sensitive: bool = False,
-                     field: str = "value") -> dict:
+    def search_value(self, query: str, case_sensitive: bool = False, field: str = "value") -> dict:
         """Search memory by value content (substring match).
 
         Args:
@@ -214,12 +227,13 @@ class Memory:
             q = query if case_sensitive else query.lower()
             matches = {}
 
-            for path in self.paths():
-                value = self.get(path)
+            for path, value in self.items():
                 if value is None:
                     continue
 
-                val_str = json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+                val_str = (
+                    json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+                )
                 if not case_sensitive:
                     val_str = val_str.lower()
 
@@ -263,7 +277,7 @@ class Memory:
                     all_paths = [p for p in self.paths() if p != path]
                     # Sort by access time (oldest first)
                     sorted_paths = sorted(all_paths, key=lambda p: self._access_times.get(p, 0))
-                    
+
                     for p in sorted_paths:
                         if p in self.protected_paths:
                             continue  # Skip protected entry
@@ -271,46 +285,35 @@ class Memory:
                         if len(self.export()) <= self.max_chars:
                             break
                         evicted_value = self.get(p)
-                        
+
                         # Archive to cold storage before deleting
                         if self.eviction_policy == "lru-archive":
                             self._archive_to_cold(p, evicted_value)
-                        
+
                         # Fire on_evict callback
                         if self.on_evict:
                             try:
                                 self.on_evict(p, evicted_value)
                             except Exception:
                                 pass  # Don't let callback errors break eviction
-                        
+
                         self.delete(p, prune=True)
-                
+
                 # Final check - if still too large (or policy is "error")
                 if len(self.export()) > self.max_chars:
                     # Rollback to snapshot
                     self._data = snapshot
                     self._invalidate()
                     raise ValueError(
-                        f"Memory overflow: setting '{path}' would exceed "
-                        f"{self.max_chars} chars"
+                        f"Memory overflow: setting '{path}' would exceed " f"{self.max_chars} chars"
                     )
-            
+
             if ttl is not None:
                 self._ttls[path] = time.time() + ttl
             elif path in self._ttls:
                 del self._ttls[path]
-                
-            if self.track_history:
-                val_to_log = value
-                if any(red_key in path.split(".") for red_key in self.redact_keys):
-                    val_to_log = "***REDACTED***"
-                
-                self._audit_log.append({
-                    "time": time.time(),
-                    "action": "set",
-                    "path": path,
-                    "value": copy.deepcopy(val_to_log)
-                })
+
+            self._add_to_history("set", path, value)
 
             self._track_access(path)
             self._trigger_watchers(path, value)
@@ -319,7 +322,7 @@ class Memory:
 
     def _archive_to_cold(self, path: str, value: Any) -> None:
         """Archive a fact to cold storage file before eviction.
-        
+
         Saves evicted facts to a .cold.json file alongside the main memory file,
         preserving them for later recovery.
         """
@@ -328,38 +331,38 @@ class Memory:
             # No path available, skip archival
             if not self.auto_flush_path:
                 return
-        
+
         cold_data[path] = {
             "value": value,
             "evicted_at": time.time(),
-            "source": self.auto_flush_path or "unknown"
+            "source": self.auto_flush_path or "unknown",
         }
-        
+
         self._save_cold(cold_data)
 
     def recover_from_cold(self, path: str) -> bool:
         """Recover an archived fact from cold storage back to hot memory.
-        
+
         Args:
             path: The dotted path of the fact to recover.
-            
+
         Returns:
             True if recovered, False if not found in cold storage.
         """
         cold_data = self._load_cold()
         if path not in cold_data:
             return False
-        
+
         entry = cold_data[path]
         value = entry.get("value") if isinstance(entry, dict) else entry
-        
+
         # Restore to hot memory
         self.set(path, value)
-        
+
         # Remove from cold storage
         del cold_data[path]
         self._save_cold(cold_data)
-        
+
         return True
 
     def cold_stats(self) -> dict:
@@ -367,62 +370,69 @@ class Memory:
         if not self.cold_storage_path:
             if self.auto_flush_path:
                 from pathlib import Path
-                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix('.cold.json'))
+
+                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix(".cold.json"))
             else:
                 return {"count": 0, "chars": 0, "path": None}
-        
+
         try:
             from pathlib import Path
+
             cold_path = Path(self.cold_storage_path)
             if not cold_path.exists():
                 return {"count": 0, "chars": 0, "path": str(cold_path)}
-            
-            raw = cold_path.read_text(encoding='utf-8')
+
+            raw = cold_path.read_text(encoding="utf-8")
             cold_data = json.loads(raw)
-            
+
             paths = list(cold_data.keys())
             oldest = None
             newest = None
             if cold_data:
                 timestamps = [
-                    v.get("evicted_at", 0) for v in cold_data.values()
-                    if isinstance(v, dict)
+                    v.get("evicted_at", 0) for v in cold_data.values() if isinstance(v, dict)
                 ]
                 if timestamps:
                     oldest = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(min(timestamps)))
                     newest = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(max(timestamps)))
-            
+
             return {
                 "count": len(paths),
                 "chars": len(raw),
                 "path": str(cold_path),
                 "oldest": oldest,
                 "newest": newest,
-                "paths": paths
+                "paths": paths,
             }
         except Exception:
             return {"count": 0, "chars": 0, "path": self.cold_storage_path}
 
-    def cold_search(self, query: str = None, path_pattern: str = None,
-                    older_than: float = None, newer_than: float = None) -> list[dict]:
+    def cold_search(
+        self,
+        query: Optional[str] = None,
+        path_pattern: Optional[str] = None,
+        older_than: Optional[float] = None,
+        newer_than: Optional[float] = None,
+    ) -> list[dict]:
         """Search cold storage for archived facts.
-        
+
         Args:
             query: Search in values (substring match, case-insensitive).
             path_pattern: Glob pattern for paths (e.g., "project.*").
             older_than: Only facts evicted before this timestamp.
             newer_than: Only facts evicted after this timestamp.
-            
+
         Returns:
             List of matching entries with path, value, evicted_at.
         """
         cold_data = self._load_cold()
         if not cold_data:
             return []
-        
+
         import fnmatch
+
         results = []
-        
+
         for path, entry in cold_data.items():
             if isinstance(entry, dict):
                 value = entry.get("value")
@@ -430,103 +440,110 @@ class Memory:
             else:
                 value = entry
                 evicted_at = 0
-            
+
             # Filter by path pattern
             if path_pattern and not fnmatch.fnmatch(path, path_pattern):
                 continue
-            
+
             # Filter by age
             if older_than and evicted_at >= older_than:
                 continue
             if newer_than and evicted_at <= newer_than:
                 continue
-            
+
             # Filter by value content
             if query:
-                val_str = json.dumps(value, ensure_ascii=False).lower() if not isinstance(value, str) else value.lower()
+                val_str = (
+                    json.dumps(value, ensure_ascii=False).lower()
+                    if not isinstance(value, str)
+                    else value.lower()
+                )
                 if query.lower() not in val_str:
                     continue
-            
-            results.append({
-                "path": path,
-                "value": value,
-                "evicted_at": evicted_at,
-                "evicted_ago": time.time() - evicted_at if evicted_at else None
-            })
-        
+
+            results.append(
+                {
+                    "path": path,
+                    "value": value,
+                    "evicted_at": evicted_at,
+                    "evicted_ago": time.time() - evicted_at if evicted_at else None,
+                }
+            )
+
         return sorted(results, key=lambda r: r.get("evicted_at", 0))
 
     def recover_all(self) -> dict:
         """Recover all facts from cold storage back to hot memory.
-        
+
         Returns:
             Dict with 'recovered' (list of paths), 'failed' (list of paths), 'count'.
         """
         cold_data = self._load_cold()
         if not cold_data:
             return {"recovered": [], "failed": [], "count": 0}
-        
+
         result = {"recovered": [], "failed": [], "count": 0}
         paths = list(cold_data.keys())
-        
+
         for path in paths:
             if self.recover_from_cold(path):
                 result["recovered"].append(path)
             else:
                 result["failed"].append(path)
-        
+
         result["count"] = len(result["recovered"])
         return result
 
     def recover_matching(self, pattern: str) -> dict:
         """Recover facts from cold storage matching a glob pattern.
-        
+
         Args:
             pattern: Glob pattern (e.g., "project.*", "user.**").
-            
+
         Returns:
             Dict with 'recovered', 'failed', 'count'.
         """
         import fnmatch
+
         cold_data = self._load_cold()
         if not cold_data:
             return {"recovered": [], "failed": [], "count": 0}
-        
+
         result = {"recovered": [], "failed": [], "count": 0}
-        
+
         for path in cold_data:
             if fnmatch.fnmatch(path, pattern):
                 if self.recover_from_cold(path):
                     result["recovered"].append(path)
                 else:
                     result["failed"].append(path)
-        
+
         result["count"] = len(result["recovered"])
         return result
 
-    def purge_cold(self, older_than: float = None, keep_last: int = None) -> dict:
+    def purge_cold(self, older_than: Optional[float] = None, keep_last: Optional[int] = None) -> dict:
         """Permanently delete old facts from cold storage.
-        
+
         Args:
             older_than: Delete facts evicted before this timestamp (epoch).
                         Use with time.time() - seconds for relative age.
             keep_last: Keep the N most recently evicted facts, delete the rest.
-            
+
         Returns:
             Dict with 'purged' (list of paths), 'kept' (int), 'count'.
         """
         cold_data = self._load_cold()
         if not cold_data:
             return {"purged": [], "kept": 0, "count": 0}
-        
+
         paths_by_age = sorted(
             cold_data.items(),
-            key=lambda item: item[1].get("evicted_at", 0) if isinstance(item[1], dict) else 0
+            key=lambda item: item[1].get("evicted_at", 0) if isinstance(item[1], dict) else 0,
         )
-        
+
         to_purge = []
         to_keep = []
-        
+
         if keep_last is not None:
             # Keep the N most recent, purge the rest
             for i, (path, entry) in enumerate(paths_by_age):
@@ -542,14 +559,18 @@ class Memory:
                 else:
                     to_keep.append(path)
         else:
-            return {"purged": [], "kept": len(paths_by_age), "count": 0,
-                    "error": "Specify older_than or keep_last"}
-        
+            return {
+                "purged": [],
+                "kept": len(paths_by_age),
+                "count": 0,
+                "error": "Specify older_than or keep_last",
+            }
+
         # Write back only kept entries
         if to_purge:
             cold_data = {p: cold_data[p] for p in to_keep}
             self._save_cold(cold_data)
-        
+
         return {"purged": to_purge, "kept": len(to_keep), "count": len(to_purge)}
 
     def _load_cold(self) -> dict:
@@ -557,16 +578,18 @@ class Memory:
         if not self.cold_storage_path:
             if self.auto_flush_path:
                 from pathlib import Path
-                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix('.cold.json'))
+
+                self.cold_storage_path = str(Path(self.auto_flush_path).with_suffix(".cold.json"))
             else:
                 return {}
-        
+
         try:
             from pathlib import Path
+
             cold_path = Path(self.cold_storage_path)
             if not cold_path.exists():
                 return {}
-            return json.loads(cold_path.read_text(encoding='utf-8'))
+            return json.loads(cold_path.read_text(encoding="utf-8"))
         except Exception:
             return {}
 
@@ -576,9 +599,10 @@ class Memory:
             return
         try:
             from pathlib import Path
+
             cold_path = Path(self.cold_storage_path)
             cold_path.parent.mkdir(parents=True, exist_ok=True)
-            cold_path.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+            cold_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
 
@@ -588,30 +612,24 @@ class Memory:
             keys = path.split(".")
             node = self._data
             stack = [(None, self._data)]  # (key_in_parent, node)
-            
+
             for key in keys[:-1]:
                 if isinstance(node, dict) and key in node:
                     node = node[key]
                     stack.append((key, node))
                 else:
                     return False
-            
+
             if keys[-1] in node:
-                if self.track_history:
-                    self._audit_log.append({
-                        "time": time.time(),
-                        "action": "delete",
-                        "path": path,
-                        "value": None
-                    })
+                self._add_to_history("delete", path, None)
 
                 del node[keys[-1]]
-                
+
                 if prune:
                     # Bubble up and remove empty dicts
                     for i in range(len(stack) - 1, 0, -1):
                         key_to_delete, current_node = stack[i]
-                        parent_node = stack[i-1][1]
+                        parent_node = stack[i - 1][1]
                         if isinstance(current_node, dict) and not current_node:
                             del parent_node[key_to_delete]
                         else:
@@ -619,14 +637,18 @@ class Memory:
 
                 self._invalidate()
                 self._trigger_watchers(path, None)
-                
+
                 # Remove metadata for this path and all sub-paths
                 pref = path + "."
-                self._ttls = {k: v for k, v in self._ttls.items() 
-                             if k != path and not k.startswith(pref)}
-                self._access_times = {k: v for k, v in self._access_times.items()
-                                     if k != path and not k.startswith(pref)}
-                
+                self._ttls = {
+                    k: v for k, v in self._ttls.items() if k != path and not k.startswith(pref)
+                }
+                self._access_times = {
+                    k: v
+                    for k, v in self._access_times.items()
+                    if k != path and not k.startswith(pref)
+                }
+
                 self._auto_flush()
                 return True
             return False
@@ -646,20 +668,24 @@ class Memory:
                         return self
                 if keys[-1] in node:
                     node[keys[-1]] = {}
-            
+
             self._invalidate()
             self._trigger_watchers(path, None)
-            
+
             if not path:
                 self._ttls = {}
                 self._access_times = {}
             else:
                 pref = path + "."
-                self._ttls = {k: v for k, v in self._ttls.items() 
-                             if k != path and not k.startswith(pref)}
-                self._access_times = {k: v for k, v in self._access_times.items()
-                                     if k != path and not k.startswith(pref)}
-                
+                self._ttls = {
+                    k: v for k, v in self._ttls.items() if k != path and not k.startswith(pref)
+                }
+                self._access_times = {
+                    k: v
+                    for k, v in self._access_times.items()
+                    if k != path and not k.startswith(pref)
+                }
+
             self._auto_flush()
             return self
 
@@ -701,10 +727,9 @@ class Memory:
             # Check budget once for the whole batch
             if len(self.export()) > self.max_chars:
                 raise ValueError(
-                    f"Memory overflow: merging {count} keys would exceed "
-                    f"{self.max_chars} chars"
+                    f"Memory overflow: merging {count} keys would exceed " f"{self.max_chars} chars"
                 )
-            
+
             # Trigger watchers for each merged key
             self._trigger_merge_watchers(data, prefix)
             return count
@@ -719,29 +744,26 @@ class Memory:
         with self._lock:
             now = time.time()
             # Sort by path length so parents are deleted before children
-            expired_paths = sorted(
-                [p for p, exp in self._ttls.items() if exp <= now],
-                key=len
-            )
+            expired_paths = sorted([p for p, exp in self._ttls.items() if exp <= now], key=len)
             count = 0
             for path in expired_paths:
                 # Check if still there (might have been deleted by a parent already)
                 if self._is_expired(path):
                     self.delete(path)
                     count += 1
-            
+
             if count > 0:
                 self._auto_flush()
             return count
 
     def _is_expired(self, path: str) -> Optional[str]:
         """Internal: Check if path or any parent path has expired.
-        
+
         Returns the path of the first expired element found, or None.
         """
         if not path:
             return None
-            
+
         now = time.time()
         keys = path.split(".")
         current = ""
@@ -795,7 +817,9 @@ class Memory:
             dst_prefix = dst_prefix.rstrip(".")
 
             # Find all paths under src_prefix
-            src_paths = [p for p in self.paths() if p == src_prefix or p.startswith(src_prefix + ".")]
+            src_paths = [
+                p for p in self.paths() if p == src_prefix or p.startswith(src_prefix + ".")
+            ]
             if not src_paths:
                 return {"moved": [], "count": 0, "skipped": []}
 
@@ -803,7 +827,7 @@ class Memory:
             moves = []
             skipped = []
             for sp in src_paths:
-                suffix = sp[len(src_prefix):]  # ".exchange" or ""
+                suffix = sp[len(src_prefix) :]  # ".exchange" or ""
                 dp = dst_prefix + suffix
                 if self.has(dp) and not overwrite:
                     skipped.append({"from": sp, "to": dp, "reason": "destination exists"})
@@ -844,8 +868,7 @@ class Memory:
                 self._invalidate()
                 raise
 
-    def merge_from_file(self, path: str, prefix: str = "",
-                        conflict: str = "overwrite") -> dict:
+    def merge_from_file(self, path: str, prefix: str = "", conflict: str = "overwrite") -> dict:
         """Merge data from a JSON file into memory.
 
         Args:
@@ -933,10 +956,7 @@ class Memory:
     def get_state(self) -> dict:
         """Return the complete state including TTL metadata."""
         with self._lock:
-            return {
-                "data": copy.deepcopy(self._data),
-                "ttls": copy.deepcopy(self._ttls)
-            }
+            return {"data": copy.deepcopy(self._data), "ttls": copy.deepcopy(self._ttls)}
 
     def set_state(self, state: dict) -> "Memory":
         """Restore memory from a state dict produced by get_state()."""
@@ -965,8 +985,64 @@ class Memory:
         """Internal: resolve the persistent snapshots file path."""
         if self.auto_flush_path:
             from pathlib import Path
-            return str(Path(self.auto_flush_path).with_suffix('.snapshots.json'))
+
+            return str(Path(self.auto_flush_path).with_suffix(".snapshots.json"))
         return None
+
+    def _history_path(self) -> Optional[str]:
+        """Internal: resolve the persistent history file path."""
+        if self.auto_flush_path:
+            from pathlib import Path
+
+            return str(Path(self.auto_flush_path).with_suffix(".history.json"))
+        return None
+
+    def _load_history(self) -> None:
+        """Internal: load history from disk."""
+        path = self._history_path()
+        if path:
+            try:
+                from pathlib import Path
+
+                p = Path(path)
+                if p.exists():
+                    self._audit_log = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+    def _save_history(self) -> None:
+        """Internal: save history to disk."""
+        path = self._history_path()
+        if path:
+            try:
+                from pathlib import Path
+
+                p = Path(path)
+                p.write_text(json.dumps(self._audit_log, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+
+    def _add_to_history(self, action: str, path: str, value: Any) -> None:
+        """Internal: add an entry to history and enforce limit."""
+        if not self.track_history:
+            return
+
+        # Redact if necessary
+        val_to_log = value
+        if any(red_key in path.split(".") for red_key in self.redact_keys):
+            val_to_log = "***REDACTED***"
+
+        entry = {
+            "time": time.time(),
+            "action": action,
+            "path": path,
+            "value": copy.deepcopy(val_to_log),
+        }
+
+        with self._lock:
+            self._audit_log.append(entry)
+            if len(self._audit_log) > self.history_limit:
+                self._audit_log = self._audit_log[-self.history_limit:]
 
     def save_snapshot(self, name: str, description: str = "") -> bool:
         """Save current state as a named snapshot to disk (persistent).
@@ -988,9 +1064,10 @@ class Memory:
             # Load existing persistent snapshots
             try:
                 from pathlib import Path
+
                 p = Path(snap_path)
                 if p.exists():
-                    all_snaps = json.loads(p.read_text(encoding='utf-8'))
+                    all_snaps = json.loads(p.read_text(encoding="utf-8"))
                 else:
                     all_snaps = {}
             except Exception:
@@ -1007,9 +1084,10 @@ class Memory:
 
             # Write back
             from pathlib import Path
+
             p = Path(snap_path)
             p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(all_snaps, ensure_ascii=False), encoding='utf-8')
+            p.write_text(json.dumps(all_snaps, ensure_ascii=False), encoding="utf-8")
 
             # Also keep in-memory for instant rollback
             self._snapshots[name] = self.get_state()
@@ -1031,10 +1109,11 @@ class Memory:
         with self._lock:
             try:
                 from pathlib import Path
+
                 p = Path(snap_path)
                 if not p.exists():
                     return False
-                all_snaps = json.loads(p.read_text(encoding='utf-8'))
+                all_snaps = json.loads(p.read_text(encoding="utf-8"))
                 if name not in all_snaps:
                     return False
                 state = all_snaps[name]["state"]
@@ -1056,20 +1135,27 @@ class Memory:
 
         try:
             from pathlib import Path
+
             p = Path(snap_path)
             if not p.exists():
                 return []
-            all_snaps = json.loads(p.read_text(encoding='utf-8'))
+            all_snaps = json.loads(p.read_text(encoding="utf-8"))
             results = []
             for name, info in all_snaps.items():
-                results.append({
-                    "name": name,
-                    "timestamp": info.get("timestamp"),
-                    "description": info.get("description", ""),
-                    "entry_count": info.get("entry_count", 0),
-                    "chars": info.get("chars", 0),
-                    "age_seconds": time.time() - info.get("timestamp", 0) if info.get("timestamp") else None,
-                })
+                results.append(
+                    {
+                        "name": name,
+                        "timestamp": info.get("timestamp"),
+                        "description": info.get("description", ""),
+                        "entry_count": info.get("entry_count", 0),
+                        "chars": info.get("chars", 0),
+                        "age_seconds": (
+                            time.time() - info.get("timestamp", 0)
+                            if info.get("timestamp")
+                            else None
+                        ),
+                    }
+                )
             return sorted(results, key=lambda r: r.get("timestamp", 0), reverse=True)
         except Exception:
             return []
@@ -1090,14 +1176,15 @@ class Memory:
         with self._lock:
             try:
                 from pathlib import Path
+
                 p = Path(snap_path)
                 if not p.exists():
                     return False
-                all_snaps = json.loads(p.read_text(encoding='utf-8'))
+                all_snaps = json.loads(p.read_text(encoding="utf-8"))
                 if name not in all_snaps:
                     return False
                 del all_snaps[name]
-                p.write_text(json.dumps(all_snaps, ensure_ascii=False), encoding='utf-8')
+                p.write_text(json.dumps(all_snaps, ensure_ascii=False), encoding="utf-8")
                 self._snapshots.pop(name, None)
                 return True
             except Exception:
@@ -1120,6 +1207,7 @@ class Memory:
             - 'unchanged': count of identical paths
             - 'summary': human-readable description
         """
+
         def _get_snapshot_state(name):
             # Try in-memory first
             if name in self._snapshots:
@@ -1129,9 +1217,10 @@ class Memory:
             if snap_path:
                 try:
                     from pathlib import Path
+
                     p = Path(snap_path)
                     if p.exists():
-                        all_snaps = json.loads(p.read_text(encoding='utf-8'))
+                        all_snaps = json.loads(p.read_text(encoding="utf-8"))
                         if name in all_snaps:
                             return all_snaps[name]["state"]
                 except Exception:
@@ -1157,8 +1246,16 @@ class Memory:
                     result[path] = v
             return result
 
-        flat_a = _flatten(state_a.get("data", state_a) if isinstance(state_a, dict) and "data" in state_a else state_a)
-        flat_b = _flatten(state_b.get("data", state_b) if isinstance(state_b, dict) and "data" in state_b else state_b)
+        flat_a = _flatten(
+            state_a.get("data", state_a)
+            if isinstance(state_a, dict) and "data" in state_a
+            else state_a
+        )
+        flat_b = _flatten(
+            state_b.get("data", state_b)
+            if isinstance(state_b, dict) and "data" in state_b
+            else state_b
+        )
 
         paths_a = set(flat_a.keys())
         paths_b = set(flat_b.keys())
@@ -1193,6 +1290,9 @@ class Memory:
                 return
             self.storage_adapter.save(self.get_state())
 
+            if self.track_history:
+                self._save_history()
+
     def _auto_flush(self) -> None:
         """Internal: flush if adapter is configured."""
         if self.storage_adapter:
@@ -1202,7 +1302,7 @@ class Memory:
         """Internal: recursively redact keys in a dict."""
         if not isinstance(data, dict):
             return data
-        
+
         redacted = {}
         for k, v in data.items():
             if k in self.redact_keys:
@@ -1213,6 +1313,18 @@ class Memory:
                 redacted[k] = v
         return redacted
 
+    def _track_all_access(self, node: Any, prefix: str = ""):
+        """Internal: recursively track access for a node and all descendants in a single pass."""
+        now = time.time()
+        def _track(n, p):
+            if p:
+                self._access_times[p] = now
+            if isinstance(n, dict):
+                for k, v in n.items():
+                    child = f"{p}.{k}" if p else k
+                    _track(v, child)
+        _track(node, prefix)
+
     def _track_access(self, path: str):
         """Internal: record access time for a path and its parents."""
         now = time.time()
@@ -1222,19 +1334,52 @@ class Memory:
             current = f"{current}.{key}" if current else key
             self._access_times[current] = now
 
+
     def paths(self, prefix: str = "") -> list:
         """List all leaf paths in the memory tree."""
         with self._lock:
-            results = []
-            node = self.get(prefix) if prefix else self._data
-            if isinstance(node, dict):
-                for key, value in node.items():
-                    full_path = f"{prefix}.{key}" if prefix else key
-                    if isinstance(value, dict):
-                        results.extend(self.paths(full_path))
-                    else:
-                        results.append(full_path)
+            node = self.get(prefix, _MISSING) if prefix else self._data
+            if node is _MISSING:
+                return []
+            results = self._paths_recursive(node, prefix)
             return sorted(results)
+
+    def _paths_recursive(self, node: Any, prefix: str) -> list:
+        """Internal recursive helper for paths()."""
+        results = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                full_path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    results.extend(self._paths_recursive(value, full_path))
+                else:
+                    results.append(full_path)
+        elif prefix:
+            results.append(prefix)
+        return results
+
+    def items(self, prefix: str = "") -> list:
+        """List all (path, value) pairs in the memory tree."""
+        with self._lock:
+            node = self.get(prefix, _MISSING) if prefix else self._data
+            if node is _MISSING:
+                return []
+            results = self._items_recursive(node, prefix)
+            return sorted(results)
+
+    def _items_recursive(self, node: Any, prefix: str) -> list:
+        """Internal recursive helper for items()."""
+        results = []
+        if isinstance(node, dict):
+            for key, value in node.items():
+                full_path = f"{prefix}.{key}" if prefix else key
+                if isinstance(value, dict):
+                    results.extend(self._items_recursive(value, full_path))
+                else:
+                    results.append((full_path, value))
+        elif prefix:
+            results.append((prefix, node))
+        return results
 
     def history(self) -> list[dict]:
         """Return a copy of the mutation audit log."""
@@ -1252,15 +1397,15 @@ class Memory:
         """Export serialized memory as a minified JSON string."""
         if not redact:
             self.purge_expired()
-            
+
         with self._lock:
             if not redact and self._cache is not None:
                 return self._cache
-            
+
             data = self._data
             if redact and self.redact_keys:
                 data = self._redact_data(copy.deepcopy(self._data))
-                
+
             res = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
             if not redact:
                 self._cache = res
@@ -1311,21 +1456,21 @@ class Memory:
 
     def estimate_size(self, value: Any) -> int:
         """Estimate the JSON character size of a value.
-        
+
         Args:
             value: Any JSON-serializable value.
-            
+
         Returns:
             Estimated character count when serialized.
         """
         try:
-            return len(json.dumps(value, ensure_ascii=False, separators=(',', ':')))
+            return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
         except (TypeError, ValueError):
             return len(str(value))
 
     def available_budget(self) -> int:
         """Return how many characters can still be written before overflow.
-        
+
         Returns:
             Number of characters remaining in the budget.
         """
@@ -1333,17 +1478,17 @@ class Memory:
 
     def will_fit(self, path: str, value: Any) -> dict:
         """Check if a value will fit at the given path without overflow.
-        
+
         Simulates the write without committing. Accounts for:
         - Current memory usage
         - New value size
         - Overwritten value size (if path exists)
         - Intermediate dict overhead for new paths
-        
+
         Args:
             path: Dotted path where the value would be stored.
             value: The value to check.
-            
+
         Returns:
             Dict with:
             - 'fits' (bool): Whether the value fits in budget
@@ -1356,7 +1501,7 @@ class Memory:
         """
         current = self.export()
         current_chars = len(current)
-        
+
         # Simulate the write
         snapshot = copy.deepcopy(self._data)
         keys = path.split(".")
@@ -1367,49 +1512,49 @@ class Memory:
             node = node[key]
         node[keys[-1]] = value
         self._invalidate()
-        
+
         new_export = self.export()
         new_chars = len(new_export)
-        
+
         # Restore
         self._data = snapshot
         self._invalidate()
-        
+
         delta = new_chars - current_chars
         available = self.max_chars - current_chars
         fits = new_chars <= self.max_chars
         overflow_by = max(0, new_chars - self.max_chars)
-        
+
         return {
-            'fits': fits,
-            'current_chars': current_chars,
-            'new_chars': new_chars,
-            'delta': delta,
-            'available': available,
-            'overflow_by': overflow_by,
-            'eviction_needed': overflow_by if not fits else 0,
+            "fits": fits,
+            "current_chars": current_chars,
+            "new_chars": new_chars,
+            "delta": delta,
+            "available": available,
+            "overflow_by": overflow_by,
+            "eviction_needed": overflow_by if not fits else 0,
         }
 
     def suggest_budget(self, target_facts: int = 50, avg_value_size: int = 80) -> dict:
         """Suggest a max_chars budget based on desired capacity.
-        
+
         Args:
             target_facts: How many facts you want to store.
             avg_value_size: Average value size in characters.
-            
+
         Returns:
             Dict with 'suggested_max_chars', 'estimated_facts', 'overhead'.
         """
         # Overhead: JSON structure, path separators, quotes, commas
         overhead_per_fact = 30  # Conservative estimate for JSON structure
         total = target_facts * (avg_value_size + overhead_per_fact)
-        
+
         return {
-            'suggested_max_chars': total,
-            'target_facts': target_facts,
-            'avg_value_size': avg_value_size,
-            'overhead_per_fact': overhead_per_fact,
-            'total_estimated': total,
+            "suggested_max_chars": total,
+            "target_facts": target_facts,
+            "avg_value_size": avg_value_size,
+            "overhead_per_fact": overhead_per_fact,
+            "total_estimated": total,
         }
 
     # ── Dunder ────────────────────────────────────────────────────

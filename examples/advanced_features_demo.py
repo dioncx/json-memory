@@ -43,7 +43,9 @@ def main():
 
     # Different attributes - no contradiction
     result2 = mem.remember("user.state", "inactive", check_contradictions=True)
-    print(f"    user.state = 'inactive': {len(result2['contradictions'])} contradictions (different attribute)")
+    print(
+        f"    user.state = 'inactive': {len(result2['contradictions'])} contradictions (different attribute)"
+    )
 
     # Get all contradictions
     contradictions = mem.get_contradictions()
@@ -55,7 +57,9 @@ def main():
 
     # Store similar facts
     mem.remember("user.skills", "Python, Go, JavaScript", check_contradictions=False)
-    mem.remember("user.programming_languages", "Python, Go, JavaScript, Rust", check_contradictions=False)
+    mem.remember(
+        "user.programming_languages", "Python, Go, JavaScript, Rust", check_contradictions=False
+    )
     mem.remember("user.known_languages", "Python, TypeScript, Go", check_contradictions=False)
 
     print("  Stored similar facts:")
@@ -117,7 +121,9 @@ def main():
     print("\n  Simulating memory decay for project.deadline (30 days):")
     simulation = mem.simulate_memory_decay("project.deadline", days=30)
     for day_data in [simulation[0], simulation[7], simulation[14], simulation[29]]:
-        print(f"    Day {day_data['day']}: {day_data['strength']:.3f} ({day_data['percent_remaining']:.1f}%)")
+        print(
+            f"    Day {day_data['day']}: {day_data['strength']:.3f} ({day_data['percent_remaining']:.1f}%)"
+        )
 
     # ── 4. Memory Health Check ─────────────────────────────────────
     print("\n\n🏥 Memory Health Check:")
