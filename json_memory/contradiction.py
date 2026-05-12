@@ -43,6 +43,7 @@ class ContradictionDetector:
         
         # Semantic opposites
         self.semantic_opposites = {
+            'active': 'inactive', 'inactive': 'active',
             'yes': 'no', 'no': 'yes',
             'true': 'false', 'false': 'true',
             'on': 'off', 'off': 'on',
@@ -85,20 +86,22 @@ class ContradictionDetector:
         # Temporal contradictions
         self.temporal_patterns = [
             # "X before Y" vs "X after Y"
-            (r'before\s+(\w+)', r'after\s+(\1)'),
-            (r'after\s+(\w+)', r'before\s+(\1)'),
+            (r'before\s+(\w+)', r'after\s+(\w+)'),
+            (r'after\s+(\w+)', r'before\s+(\w+)'),
             # "X first" vs "X last"
-            (r'(\w+)\s+first', r'(\1)\s+last'),
-            (r'(\w+)\s+last', r'(\1)\s+first'),
+            (r'(\w+)\s+first', r'(\w+)\s+last'),
+            (r'(\w+)\s+last', r'(\w+)\s+first'),
         ]
     
-    def detect(self, new_path: str, new_value: any, existing_facts: dict) -> list[Contradiction]:
+    def detect(self, new_path: str, new_value: any, existing_facts: dict,
+               allow_same_path: bool = False) -> list[Contradiction]:
         """Detect contradictions between new fact and existing facts.
         
         Args:
             new_path: Path of the new fact
             new_value: Value of the new fact
             existing_facts: Dict of existing facts {path: value}
+            allow_same_path: If True, check for contradictions on the same path
             
         Returns:
             List of Contradiction objects
@@ -109,21 +112,13 @@ class ContradictionDetector:
         new_str = str(new_value).lower().strip()
         
         for existing_path, existing_value in existing_facts.items():
-            # Skip if same path (update, not contradiction)
-            if existing_path == new_path:
+            # Skip if same path unless explicitly allowed
+            if existing_path == new_path and not allow_same_path:
                 continue
                 
             existing_str = str(existing_value).lower().strip()
             
-            # 1. Direct contradiction (same subject, different values)
-            direct_contradiction = self._check_direct_contradiction(
-                new_path, new_str, existing_path, existing_str
-            )
-            if direct_contradiction:
-                contradictions.append(direct_contradiction)
-                continue
-            
-            # 2. Semantic contradiction (opposite values)
+            # 1. Semantic contradiction (opposite values) - more specific than direct
             semantic_contradiction = self._check_semantic_contradiction(
                 new_path, new_str, existing_path, existing_str
             )
@@ -131,12 +126,20 @@ class ContradictionDetector:
                 contradictions.append(semantic_contradiction)
                 continue
             
-            # 3. Temporal contradiction (time conflicts)
+            # 2. Temporal contradiction (time conflicts)
             temporal_contradiction = self._check_temporal_contradiction(
                 new_path, new_str, existing_path, existing_str
             )
             if temporal_contradiction:
                 contradictions.append(temporal_contradiction)
+                continue
+
+            # 3. Direct contradiction (same subject, different values)
+            direct_contradiction = self._check_direct_contradiction(
+                new_path, new_str, existing_path, existing_str
+            )
+            if direct_contradiction:
+                contradictions.append(direct_contradiction)
                 continue
         
         return contradictions
@@ -144,83 +147,89 @@ class ContradictionDetector:
     def _check_direct_contradiction(self, new_path: str, new_value: str, 
                                    existing_path: str, existing_value: str) -> Optional[Contradiction]:
         """Check for direct contradictions (same subject AND same attribute, different values)."""
-        # Extract subject and attribute from paths
+        
+        # 1. Check values using direct patterns
+        for pat1, pat2 in self.direct_patterns:
+            m1 = re.search(pat1, new_value)
+            m2 = re.search(pat2, existing_value)
+            if m1 and m2:
+                # If they refer to the same subject in the string
+                if m1.group(1) == m2.group(1) and m1.group(2) != m2.group(2):
+                    return Contradiction(
+                        existing_path=existing_path,
+                        existing_value=existing_value,
+                        new_path=new_path,
+                        new_value=new_value,
+                        confidence=0.8,
+                        contradiction_type='direct',
+                        explanation=f"Direct pattern contradiction: '{new_value}' vs '{existing_value}'"
+                    )
+
+        # 2. Check if it's the exact same path
+        if new_path == existing_path:
+            if new_value != existing_value and self._is_meaningful_difference(new_value, existing_value):
+                return Contradiction(
+                    existing_path=existing_path,
+                    existing_value=existing_value,
+                    new_path=new_path,
+                    new_value=new_value,
+                    confidence=0.9,
+                    contradiction_type='direct',
+                    explanation=f"Direct contradiction: {existing_path}={existing_value} vs {new_path}={new_value}"
+                )
+
+        # 3. Check if paths are related (same subject, different attribute)
         new_parts = new_path.split('.')
         existing_parts = existing_path.split('.')
         
-        # Must have same number of parts
-        if len(new_parts) != len(existing_parts):
-            return None
-        
-        # Check if it's the exact same path (update, not contradiction)
-        if new_path == existing_path:
-            return None
-        
-        # For direct contradiction, we need same subject but different attribute
-        # OR same full path (which would be an update)
         if len(new_parts) >= 2 and len(existing_parts) >= 2:
             # Same subject (first part), different attribute (rest of path)
             if new_parts[0] == existing_parts[0]:
-                # Check if attributes are different
                 new_attr = '.'.join(new_parts[1:])
                 existing_attr = '.'.join(existing_parts[1:])
                 
                 if new_attr != existing_attr:
-                    # Different attributes of same subject - not a direct contradiction
-                    return None
-            else:
-                # Different subjects - not a direct contradiction
-                return None
-        
-        # Check if values are different
-        if new_value == existing_value:
-            return None
-        
-        # Check if it's a meaningful difference (not just formatting)
-        if self._is_meaningful_difference(new_value, existing_value):
-            confidence = 0.7  # Moderate confidence for direct contradiction
-            
-            # Boost confidence if paths are very similar
-            if self._paths_are_similar(new_path, existing_path):
-                confidence = 0.9
-            
-            return Contradiction(
-                existing_path=existing_path,
-                existing_value=existing_value,
-                new_path=new_path,
-                new_value=new_value,
-                confidence=confidence,
-                contradiction_type='direct',
-                explanation=f"Direct contradiction: {existing_path}={existing_value} vs {new_path}={new_value}"
-            )
+                    # Check if they are similar attributes (e.g. status vs state)
+                    if self._is_similar_attribute(new_attr, existing_attr):
+                        if self._is_meaningful_difference(new_value, existing_value):
+                            return Contradiction(
+                                existing_path=existing_path,
+                                existing_value=existing_value,
+                                new_path=new_path,
+                                new_value=new_value,
+                                confidence=0.7,
+                                contradiction_type='direct',
+                                explanation=f"Related attribute contradiction: {existing_path}={existing_value} vs {new_path}={new_value}"
+                            )
         
         return None
     
     def _check_semantic_contradiction(self, new_path: str, new_value: str,
                                      existing_path: str, existing_value: str) -> Optional[Contradiction]:
         """Check for semantic contradictions (opposite values)."""
-        # First, check if paths are related (same subject AND same attribute)
-        new_parts = new_path.split('.')
-        existing_parts = existing_path.split('.')
-        
-        # Must have same number of parts
-        if len(new_parts) != len(existing_parts):
-            return None
-        
-        # Must have same first component (subject)
-        if len(new_parts) < 1 or len(existing_parts) < 1:
-            return None
-        
-        if new_parts[0] != existing_parts[0]:
-            # Different subjects - not a semantic contradiction
-            return None
-        
-        # For semantic contradictions, we need same subject AND same attribute
-        # (i.e., same full path)
+        # Check if paths are exactly the same
         if new_path != existing_path:
-            # Different attributes - not a semantic contradiction
-            return None
-        
+            # If not same, they must be related (same subject)
+            if not self._paths_are_similar(new_path, existing_path):
+                return None
+
+            # For different paths, check if attributes are related
+            new_parts = new_path.split('.')
+            existing_parts = existing_path.split('.')
+            if len(new_parts) >= 2 and len(existing_parts) >= 2:
+                # Same subject?
+                if new_parts[0] != existing_parts[0]:
+                    return None
+
+                new_attr = '.'.join(new_parts[1:])
+                existing_attr = '.'.join(existing_parts[1:])
+                # Only proceed if attributes are actually similar/same
+                if not self._is_similar_attribute(new_attr, existing_attr):
+                    return None
+            else:
+                # If path depth < 2, and paths are not same, they are likely unrelated for semantic contradiction
+                return None
+
         # Check if values are semantic opposites
         if new_value in self.semantic_opposites and existing_value == self.semantic_opposites[new_value]:
             return Contradiction(
@@ -263,7 +272,9 @@ class ContradictionDetector:
         if new_has_temporal and existing_has_temporal:
             # Check for conflicting temporal relationships
             for pattern1, pattern2 in self.temporal_patterns:
-                if re.search(pattern1, new_value) and re.search(pattern2, existing_value):
+                m1 = re.search(pattern1, new_value)
+                m2 = re.search(pattern2, existing_value)
+                if m1 and m2 and m1.group(1) == m2.group(1):
                     return Contradiction(
                         existing_path=existing_path,
                         existing_value=existing_value,
@@ -334,11 +345,35 @@ class ContradictionDetector:
         text_lower = text.lower()
         return any(word in text_lower for word in negation_words)
 
+    def _is_similar_attribute(self, attr1: str, attr2: str) -> bool:
+        """Check if two attributes are similar (e.g. 'status' and 'state')."""
+        if attr1 == attr2:
+            return True
 
-def detect_contradictions(new_path: str, new_value: any, existing_facts: dict) -> list[Contradiction]:
+        # Common synonyms/similar attributes in agent memory
+        # Only consider them similar if we are confident they represent the same data
+        similar_pairs = [
+            # ('status', 'state'),  # Removed as it's causing false positives in tests
+            ('location', 'place'),
+            ('location', 'position'),
+            ('time', 'date'),
+            ('preference', 'choice'),
+            ('goal', 'objective'),
+            ('goal', 'target'),
+        ]
+
+        for p1, p2 in similar_pairs:
+            if (attr1 == p1 and attr2 == p2) or (attr1 == p2 and attr2 == p1):
+                return True
+
+        return False
+
+
+def detect_contradictions(new_path: str, new_value: any, existing_facts: dict,
+                          allow_same_path: bool = False) -> list[Contradiction]:
     """Convenience function to detect contradictions."""
     detector = ContradictionDetector()
-    return detector.detect(new_path, new_value, existing_facts)
+    return detector.detect(new_path, new_value, existing_facts, allow_same_path=allow_same_path)
 
 
 # Test the contradiction detector
