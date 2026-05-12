@@ -8,10 +8,10 @@ import pytest
 
 from json_memory import Memory, SmartMemory
 
-
 # ═══════════════════════════════════════════════════════════════════
 # search_value
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestSearchValue:
     def test_basic(self):
@@ -91,6 +91,7 @@ class TestSearchValue:
 # ═══════════════════════════════════════════════════════════════════
 # persistent snapshots
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestPersistentSnapshots:
     def test_save_and_load(self):
@@ -224,6 +225,7 @@ class TestPersistentSnapshots:
 # move (bulk rename)
 # ═══════════════════════════════════════════════════════════════════
 
+
 class TestMove:
     def test_basic(self):
         mem = Memory()
@@ -310,6 +312,7 @@ class TestMove:
 # ═══════════════════════════════════════════════════════════════════
 # merge_from_file
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestMergeFromFile:
     def test_basic(self):
@@ -400,6 +403,7 @@ class TestMergeFromFile:
 # ═══════════════════════════════════════════════════════════════════
 # diff_snapshots
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestDiffSnapshots:
     def test_basic_diff(self):
@@ -498,6 +502,7 @@ class TestDiffSnapshots:
 # ═══════════════════════════════════════════════════════════════════
 # SmartMemory wrappers
 # ═══════════════════════════════════════════════════════════════════
+
 
 class TestSmartMemoryWrappers:
     def test_search_value(self):
