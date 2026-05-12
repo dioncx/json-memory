@@ -73,12 +73,12 @@ class Schema:
             for key, expected in template.items():
                 is_required = key.startswith("!")
                 clean_key = key[1:] if is_required else key
-                
+
                 if clean_key not in data:
                     if is_required:
                         return False
                     continue
-                
+
                 if not self._check(data[clean_key], expected, strict):
                     return False
             return True
@@ -142,7 +142,7 @@ class Schema:
             is_required = key.startswith("!")
             clean_key = key[1:] if is_required else key
             path = f"{prefix}.{clean_key}" if prefix else clean_key
-            
+
             if clean_key not in data:
                 missing.append(path)
             elif isinstance(expected, dict) and isinstance(data[clean_key], dict):
@@ -155,12 +155,12 @@ class Schema:
             return extra
         for key in data:
             path = f"{prefix}.{key}" if prefix else key
-            
+
             # Find key in template (with or without '!')
             template_key = key
             if key not in template and f"!{key}" in template:
                 template_key = f"!{key}"
-            
+
             if template_key not in template:
                 extra.append(path)
             elif isinstance(data[key], dict) and isinstance(template.get(template_key), dict):
@@ -173,14 +173,16 @@ class Schema:
 
     def to_openai_tools(self, name: str, description: str) -> list[dict]:
         """Convert schema to an OpenAI-compatible tools array."""
-        return [{
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": description,
-                "parameters": self._to_json_schema(self._template)
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": description,
+                    "parameters": self._to_json_schema(self._template),
+                },
             }
-        }]
+        ]
 
     def _to_json_schema(self, template: Any) -> dict:
         """Internal: convert template to JSON Schema."""
@@ -193,12 +195,12 @@ class Schema:
                 properties[clean_k] = self._to_json_schema(v)
                 if is_req:
                     required.append(clean_k)
-            
+
             res = {"type": "object", "properties": properties}
             if required:
                 res["required"] = required
             return res
-        
+
         if isinstance(template, list):
             items = self._to_json_schema(template[0]) if template else {"type": "object"}
             return {"type": "array", "items": items}
@@ -210,7 +212,7 @@ class Schema:
             "bool": "boolean",
             "list": "array",
             "dict": "object",
-            "any": "object"
+            "any": "object",
         }
         return {"type": type_map.get(template, "string")}
 

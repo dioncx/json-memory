@@ -6,23 +6,49 @@ import json
 import re
 from typing import Any
 
-
 # ── Short Key Dictionary ─────────────────────────────────────────
 
 ABBREVIATIONS = {
-    "user": "u", "name": "n", "nickname": "nn", "preferred": "p",
-    "timezone": "tz", "platform": "plat", "language": "lang",
-    "exchange": "ex", "restart": "rst", "watchlist": "wl",
-    "balance": "bal", "password": "pw", "email": "em",
-    "server": "srv", "database": "db", "configuration": "cfg",
-    "project": "proj", "description": "desc", "version": "ver",
-    "endpoint": "ep", "webhook": "wh", "domain": "dom",
-    "directory": "dir", "command": "cmd", "interval": "intv",
-    "status": "st", "prediction": "pred", "emergency": "emerg",
-    "technical": "tech", "sentiment": "sent", "confidence": "conf",
-    "position": "pos", "stop_loss": "sl", "take_profit": "tp",
-    "environment": "env", "authentication": "auth", "token": "tk",
-    "api_key": "ak", "secret": "sec", "public": "pub",
+    "user": "u",
+    "name": "n",
+    "nickname": "nn",
+    "preferred": "p",
+    "timezone": "tz",
+    "platform": "plat",
+    "language": "lang",
+    "exchange": "ex",
+    "restart": "rst",
+    "watchlist": "wl",
+    "balance": "bal",
+    "password": "pw",
+    "email": "em",
+    "server": "srv",
+    "database": "db",
+    "configuration": "cfg",
+    "project": "proj",
+    "description": "desc",
+    "version": "ver",
+    "endpoint": "ep",
+    "webhook": "wh",
+    "domain": "dom",
+    "directory": "dir",
+    "command": "cmd",
+    "interval": "intv",
+    "status": "st",
+    "prediction": "pred",
+    "emergency": "emerg",
+    "technical": "tech",
+    "sentiment": "sent",
+    "confidence": "conf",
+    "position": "pos",
+    "stop_loss": "sl",
+    "take_profit": "tp",
+    "environment": "env",
+    "authentication": "auth",
+    "token": "tk",
+    "api_key": "ak",
+    "secret": "sec",
+    "public": "pub",
 }
 
 
@@ -45,10 +71,7 @@ def compress(data: dict, abbreviations: dict = None) -> dict:
 
 def _compress_node(node: Any, abbr: dict) -> Any:
     if isinstance(node, dict):
-        return {
-            abbr.get(k, k): _compress_node(v, abbr)
-            for k, v in node.items()
-        }
+        return {abbr.get(k, k): _compress_node(v, abbr) for k, v in node.items()}
     elif isinstance(node, list):
         return [_compress_node(item, abbr) for item in node]
     return node

@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="json-memory",
-    version = "1.9.1",
+    version="1.9.1",
     description="Hierarchical associative memory for AI agents",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
@@ -11,6 +11,7 @@ setup(
     url="https://github.com/dioncx/json-memory",
     license="MIT",
     packages=find_packages(),
+    install_requires=["cryptography>=41.0.0"],
     python_requires=">=3.9",
     classifiers=[
         "Development Status :: 3 - Alpha",
