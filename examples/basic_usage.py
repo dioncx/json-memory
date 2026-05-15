@@ -76,20 +76,24 @@ def example_migration():
 
     # New JSON memory
     mem = Memory(max_chars=2200)
-    mem.merge({
-        "bot": {
-            "lang": "Go",
-            "ex": "demo-api.binance.com",
-            "rst": "kill&&nohup ./my_bot>bot.log 2>&1",
-            "wl": "BNB,KITE,AGLD,BEL,ENSO,CRV",
-            "bal": "$12.6K",
-            "cron": "d604:smart_money:30m"
+    mem.merge(
+        {
+            "bot": {
+                "lang": "Go",
+                "ex": "demo-api.binance.com",
+                "rst": "kill&&nohup ./my_bot>bot.log 2>&1",
+                "wl": "BNB,KITE,AGLD,BEL,ENSO,CRV",
+                "bal": "$12.6K",
+                "cron": "d604:smart_money:30m",
+            }
         }
-    })
+    )
 
     json_str = mem.export()
     print(f"  JSON: {len(json_str)} chars")
-    print(f"  Savings: {len(prose) - len(json_str)} chars ({(1 - len(json_str)/len(prose))*100:.0f}%)")
+    print(
+        f"  Savings: {len(prose) - len(json_str)} chars ({(1 - len(json_str)/len(prose))*100:.0f}%)"
+    )
     print(f"  Data: {json_str}")
     print()
 

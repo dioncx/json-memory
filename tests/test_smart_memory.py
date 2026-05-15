@@ -34,6 +34,7 @@ def mem(tmp_dir):
 
 # ── Token Normalization ───────────────────────────────────────────────
 
+
 class TestNormalizeTokens:
     def test_basic(self):
         tokens = _normalize_tokens("Hello World Test")
@@ -59,6 +60,7 @@ class TestNormalizeTokens:
 
 
 # ── Scoring Functions ──────────────────────────────────────────────────
+
 
 class TestScoring:
     def test_recency_decay(self):
@@ -94,6 +96,7 @@ class TestScoring:
 
 # ── Basic Operations ──────────────────────────────────────────────────
 
+
 class TestSmartMemory:
     def test_remember_and_recall(self, mem):
         mem.remember("user.name", "Alice")
@@ -126,6 +129,7 @@ class TestSmartMemory:
 
 
 # ── Smart Retrieval ───────────────────────────────────────────────────
+
 
 class TestSmartRetrieval:
     def test_relevant_returns_only_matches(self, mem):
@@ -174,6 +178,7 @@ class TestSmartRetrieval:
 
 # ── Auto-Extraction ───────────────────────────────────────────────────
 
+
 class TestAutoExtraction:
     def test_name_extraction(self, mem):
         extracted = mem.process_conversation("My name is Bob")
@@ -206,6 +211,7 @@ class TestAutoExtraction:
 
 # ── Associative Memory ────────────────────────────────────────────────
 
+
 class TestAssociativeMemory:
     def test_link_and_associate(self, mem):
         mem.link("debugging", ["logs", "reproduce"])
@@ -222,6 +228,7 @@ class TestAssociativeMemory:
 
 
 # ── Tiered Memory ─────────────────────────────────────────────────────
+
 
 class TestTieredMemory:
     def test_hot_warm_cold(self, tmp_dir):
@@ -253,6 +260,7 @@ class TestTieredMemory:
 
 # ── Persistence ───────────────────────────────────────────────────────
 
+
 class TestPersistence:
     def test_remember_persists(self, tmp_dir):
         path = os.path.join(tmp_dir, "persist.json")
@@ -275,6 +283,7 @@ class TestPersistence:
 
 
 # ── Semantic Layer (optional) ─────────────────────────────────────────
+
 
 class TestSemanticIndex:
     @pytest.mark.skipif(not HAS_SEMANTIC, reason="sentence-transformers not installed")
@@ -299,6 +308,7 @@ class TestSemanticIndex:
         index._dim = 384
         index._model_name = "all-MiniLM-L6-v2"
         import threading
+
         index._lock = threading.RLock()
 
         assert index.search("anything") == []
@@ -306,6 +316,7 @@ class TestSemanticIndex:
 
 
 # ── Edge Cases ─────────────────────────────────────────────────────────
+
 
 class TestEdgeCases:
     def test_empty_memory_relevant(self, mem):

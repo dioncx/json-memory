@@ -13,7 +13,6 @@ CONCEPT_MAP = {
     "about": ["identity", "background", "info", "information", "detail"],
     "name": ["who", "identity", "user", "called", "person"],
     "identity": ["who", "name", "user"],
-    
     # Time
     "time": ["timezone", "clock", "hour", "schedule", "gmt", "utc"],
     "timezone": ["time", "gmt", "utc", "clock", "hour", "offset"],
@@ -22,7 +21,6 @@ CONCEPT_MAP = {
     "sleep": ["timezone", "time", "night", "clock"],
     "morning": ["timezone", "time", "wake", "clock"],
     "late": ["timezone", "time", "night", "clock"],
-    
     # Location
     "where": ["location", "place", "city", "country", "address", "server", "ip"],
     "location": ["where", "place", "city", "country", "address"],
@@ -30,7 +28,6 @@ CONCEPT_MAP = {
     "from": ["location", "city", "country", "origin"],
     "server": ["ip", "host", "machine", "address", "ssh"],
     "ip": ["server", "host", "address", "network"],
-    
     # Actions
     "restart": ["start", "stop", "reboot", "reload", "reset", "run"],
     "start": ["restart", "run", "launch", "begin", "boot"],
@@ -39,7 +36,6 @@ CONCEPT_MAP = {
     "deploy": ["push", "release", "ship", "publish", "upload", "launch"],
     "upload": ["push", "publish", "deploy", "send", "submit"],
     "install": ["setup", "download", "pip", "npm"],
-    
     # Trading
     "trading": ["trade", "bot", "exchange", "strategy", "signal", "order", "position"],
     "trade": ["trading", "bot", "exchange", "order", "buy", "sell"],
@@ -52,24 +48,47 @@ CONCEPT_MAP = {
     "price": ["trading", "market", "value", "cost", "rate"],
     "buy": ["trading", "order", "long", "entry"],
     "sell": ["trading", "order", "short", "exit"],
-    
     # Project
     "project": ["repo", "repository", "code", "source", "library", "package"],
     "repo": ["project", "repository", "github", "git", "code"],
     "library": ["project", "package", "module", "pip", "pypi"],
     "version": ["release", "tag", "semver", "update"],
-    
     # System
     "error": ["bug", "issue", "problem", "fail", "broken", "crash"],
     "fix": ["repair", "patch", "solve", "debug", "resolve"],
     "log": ["debug", "trace", "output", "print"],
     # Career / Professional
-    "career": ["job", "work", "profession", "professional", "employment", "role", "position", "occupation"],
+    "career": [
+        "job",
+        "work",
+        "profession",
+        "professional",
+        "employment",
+        "role",
+        "position",
+        "occupation",
+    ],
     "job": ["career", "work", "profession", "professional", "employment", "role", "position"],
     "work": ["career", "job", "profession", "professional", "employment", "company", "office"],
-    "professional": ["career", "job", "work", "profession", "employment", "background", "experience"],
+    "professional": [
+        "career",
+        "job",
+        "work",
+        "profession",
+        "employment",
+        "background",
+        "experience",
+    ],
     "profession": ["career", "job", "work", "professional", "employment", "background", "field"],
-    "background": ["history", "experience", "past", "career", "profession", "education", "qualification"],
+    "background": [
+        "history",
+        "experience",
+        "past",
+        "career",
+        "profession",
+        "education",
+        "qualification",
+    ],
     "experience": ["background", "history", "skill", "expertise", "career"],
     "employment": ["career", "job", "work", "company", "position"],
     "education": ["degree", "university", "school", "qualification", "background", "study"],
@@ -80,7 +99,6 @@ CONCEPT_MAP = {
     "api": ["endpoint", "request", "response", "key"],
     "key": ["api", "token", "secret", "credential", "auth"],
     "database": ["db", "sql", "postgres", "mysql", "store"],
-    
     # Communication
     "message": ["chat", "send", "notify", "alert", "telegram"],
     "telegram": ["message", "chat", "bot", "notify", "channel"],
@@ -91,17 +109,14 @@ CONCEPT_MAP = {
     "speak": ["communication", "talk", "chat", "message"],
     "chat": ["communication", "talk", "speak", "message", "telegram"],
     "conversation": ["communication", "talk", "chat", "dialogue"],
-    
     # Lessons / Mistakes
     "mistakes": ["lesson", "error", "problem", "issue", "failure", "wrong"],
     "lesson": ["mistakes", "learning", "experience", "knowledge", "wisdom", "remember"],
     "learning": ["lesson", "education", "study", "knowledge", "experience"],
     "remember": ["memory", "recall", "forget", "note", "save"],
     "forget": ["remember", "memory", "lost", "missing"],
-    
     # Projects (plural)
     "projects": ["project", "repo", "repository", "code", "application", "software"],
-    
     # Automation
     "auto": ["automatic", "automated", "restart", "systemd", "service", "daemon"],
     "automatic": ["auto", "automated", "restart", "systemd", "service"],
@@ -109,7 +124,6 @@ CONCEPT_MAP = {
     "automated": ["auto", "automatic", "automatically", "restart", "systemd", "service", "daemon"],
     "systemd": ["service", "daemon", "auto", "restart", "systemctl"],
     "daemon": ["service", "systemd", "auto", "background", "process"],
-    
     # Temporal
     "recent": ["new", "fresh", "latest", "current", "today", "yesterday"],
     "recently": ["recent", "new", "fresh", "latest"],
@@ -124,7 +138,6 @@ CONCEPT_MAP = {
     "then": ["past", "previous", "before", "ago"],
     "when": ["time", "date", "moment", "period"],
     "time": ["when", "date", "moment", "period", "hour", "day"],
-    
     # Negation / Warnings
     "not": ["don't", "doesn't", "didn't", "won't", "can't", "cannot", "never", "without"],
     "don't": ["not", "doesn't", "didn't", "won't", "can't", "cannot", "never", "avoid"],
