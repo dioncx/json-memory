@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Synapse — Associative memory with linked concept traversal.
 
@@ -32,8 +33,13 @@ class Synapse:
         self._frequencies: dict[str, dict[str, int]] = {}  # concept → {assoc: use_count}
         self._metadata: dict[str, dict] = {}
 
-    def link(self, concept: str, associations: list[str], bidirectional: bool = True,
-             weights: dict[str, float] = None) -> None:
+    def link(
+        self,
+        concept: str,
+        associations: list[str],
+        bidirectional: bool = True,
+        weights: Optional[dict[str, float]] = None,
+    ) -> None:
         """Link a concept to its associations with optional weights.
 
         Args:
@@ -180,12 +186,12 @@ class Synapse:
 
     def rename_concept(self, old: str, new: str) -> bool:
         """Rename a concept, preserving all its links and weights.
-        
+
         Returns True if old concept was found and renamed.
         """
         if old not in self._links or new in self._links:
             return False
-            
+
         # Update neighbors' links to the new name
         for neighbor in self._links.get(old, []):
             if neighbor in self._links and old in self._links[neighbor]:
@@ -195,7 +201,7 @@ class Synapse:
                 self._weights[neighbor][new] = self._weights[neighbor].pop(old)
             if neighbor in self._frequencies and old in self._frequencies[neighbor]:
                 self._frequencies[neighbor][new] = self._frequencies[neighbor].pop(old)
-                
+
         # Move the concept data
         self._links[new] = self._links.pop(old)
         if old in self._weights:
@@ -204,33 +210,37 @@ class Synapse:
             self._frequencies[new] = self._frequencies.pop(old)
         if old in self._metadata:
             self._metadata[new] = self._metadata.pop(old)
-            
+
         return True
 
     def subgraph(self, concepts: list[str]) -> "Synapse":
         """Extract a subgraph containing only specified concepts and their mutual links.
-        
+
         Useful for focusing an agent on a specific context.
         """
         sub = Synapse()
         concepts_set = set(concepts)
-        
+
         for c in concepts:
             if c not in self._links:
                 continue
-            
+
             # Filter links to only those within the requested concept set
             valid_assocs = [a for a in self._links[c] if a in concepts_set]
             sub._links[c] = valid_assocs
-            
+
             # Pull weights/freqs/metadata for valid assocs
             if c in self._weights:
-                sub._weights[c] = {a: self._weights[c][a] for a in valid_assocs if a in self._weights[c]}
+                sub._weights[c] = {
+                    a: self._weights[c][a] for a in valid_assocs if a in self._weights[c]
+                }
             if c in self._frequencies:
-                sub._frequencies[c] = {a: self._frequencies[c][a] for a in valid_assocs if a in self._frequencies[c]}
+                sub._frequencies[c] = {
+                    a: self._frequencies[c][a] for a in valid_assocs if a in self._frequencies[c]
+                }
             if c in self._metadata:
                 sub._metadata[c] = copy.deepcopy(self._metadata[c])
-                
+
         return sub
 
     def strengthen(self, concept: str, assoc: str, boost: float = 0.1) -> float:
@@ -290,37 +300,37 @@ class Synapse:
 
     def find_strongest_path(self, start: str, end: str) -> list[str]:
         """Find the path with the highest conceptual strength (Dijkstra).
-        
+
         Uses weight-based distance: dist = 1 - weight.
         Returns list of concepts from start to end, or empty if no path.
         """
         if start not in self._links:
             return []
-            
+
         # pq: (distance, current_node, path)
         pq = [(0.0, start, [start])]
         visited = {start: 0.0}
-        
+
         while pq:
             dist, current, path = heapq.heappop(pq)
-            
+
             if current == end:
                 return path
-                
-            if dist > visited.get(current, float('inf')):
+
+            if dist > visited.get(current, float("inf")):
                 continue
-                
+
             for neighbor in self._links.get(current, []):
                 # Strength depends on the weight of the link current -> neighbor
                 weight = self.get_weight(current, neighbor)
                 new_dist = dist + (1.0 - weight)
-                
-                if new_dist < visited.get(neighbor, float('inf')):
+
+                if new_dist < visited.get(neighbor, float("inf")):
                     visited[neighbor] = new_dist
                     new_path = list(path)
                     new_path.append(neighbor)
                     heapq.heappush(pq, (new_dist, neighbor, new_path))
-                    
+
         return []
 
     def find_path(self, start: str, end: str, max_depth: int = 5) -> Optional[list]:
@@ -378,7 +388,7 @@ class Synapse:
         Returns self for chaining.
         """
         other_data = other.to_dict()
-        
+
         # Merge links
         for concept, associations in other_data["links"].items():
             if concept not in self._links:
@@ -386,27 +396,27 @@ class Synapse:
             for assoc in associations:
                 if assoc not in self._links[concept]:
                     self._links[concept].append(assoc)
-        
+
         # Merge weights
         for concept, weights in other_data["weights"].items():
             if concept not in self._weights:
                 self._weights[concept] = {}
             for assoc, weight in weights.items():
                 self._weights[concept][assoc] = weight
-        
+
         # Merge frequencies
         for concept, freqs in other_data["frequencies"].items():
             if concept not in self._frequencies:
                 self._frequencies[concept] = {}
             for assoc, count in freqs.items():
                 self._frequencies[concept][assoc] = self._frequencies[concept].get(assoc, 0) + count
-        
+
         # Merge metadata
         for concept, meta in other_data["metadata"].items():
             if concept not in self._metadata:
                 self._metadata[concept] = {}
             self._metadata[concept].update(meta)
-            
+
         return self
 
     def export(self) -> str:
