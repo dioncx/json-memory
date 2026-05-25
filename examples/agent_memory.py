@@ -32,6 +32,7 @@ class AgentMemory:
         # Associative memory for concept linking
         self.brain = Synapse()
 
+    # pylint: disable=function-redefined
     def remember(self, path: str, value, ttl: int = None):
         """Store a fact. Use dotted paths: 'user.name', 'project.status'"""
         self.mem.set(path, value, ttl=ttl)
