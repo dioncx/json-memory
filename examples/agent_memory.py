@@ -9,7 +9,78 @@ Usage:
     print(memory.recall("user.timezone"))  # → "GMT+7"
 """
 
-from json_memory import SmartMemory as AgentMemory
+from json_memory import Memory, Synapse
+import json
+import os
+from pathlib import Path
+
+
+class AgentMemory:
+    """Structured memory layer for AI agents. Persists to disk, survives restarts."""
+
+    def __init__(self, path: str = "agent_memory.json", max_chars: int = 5000):
+        self.path = Path(path)
+        self.max_chars = max_chars
+
+        # Load existing memory or start fresh
+        if self.path.exists():
+            raw = self.path.read_text(encoding="utf-8")
+            self.mem = Memory.from_json(raw, max_chars=max_chars)
+        else:
+            self.mem = Memory(max_chars=max_chars)
+
+        # Associative memory for concept linking
+        self.brain = Synapse()
+
+    # pylint: disable=function-redefined
+    def remember(self, path: str, value, ttl: int = None):
+        """Store a fact. Use dotted paths: 'user.name', 'project.status'"""
+        self.mem.set(path, value, ttl=ttl)
+        self._flush()
+
+    def recall(self, path: str, default=None):
+        """Retrieve a fact by dotted path."""
+        return self.mem.get(path, default=default)
+
+    def forget(self, path: str):
+        """Delete a fact."""
+        self.mem.delete(path, prune=True)
+        self._flush()
+
+    def search(self, pattern: str) -> dict:
+        """Find facts matching a glob pattern: 'user.*', '**.status'"""
+        return self.mem.find(pattern)
+
+    def context(self) -> str:
+        """Export memory as compact JSON string for injection into LLM prompts."""
+        return self.mem.export()
+
+    def link(self, concept: str, associations: list[str], weights: dict = None):
+        """Create concept associations for associative recall."""
+        self.brain.link(concept, associations, weights=weights)
+
+    def associate(self, concept: str, depth: int = 1) -> list[str]:
+        """Recall associated concepts (like thinking 'coffee' → 'morning', 'energy')."""
+        return self.brain.activate(concept, depth=depth)
+
+    def snapshot(self, label: str):
+        """Save state before risky operations. Roll back with rollback()."""
+        self.mem.snapshot(label)
+
+    def rollback(self, label: str):
+        """Restore state from a snapshot."""
+        self.mem.rollback(label)
+        self._flush()
+
+    def stats(self) -> dict:
+        """Memory usage stats."""
+        return self.mem.stats()
+
+    def _flush(self):
+        """Persist to disk."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(self.mem.export(), encoding="utf-8")
+
 
 # ─── Example: Basic Agent Loop Integration ─────────────────────────────
 
