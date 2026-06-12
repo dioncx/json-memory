@@ -1078,3 +1078,42 @@ def test_adapter_auto_config(tmp_path):
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)
+
+def test_memory_unwatch():
+    mem = Memory()
+    events = []
+
+    def on_change(path, val):
+        events.append((path, val))
+
+    def on_change2(path, val):
+        events.append(("callback2", path, val))
+
+    mem.watch("user.profile", on_change)
+    mem.watch("user.profile", on_change2)
+
+    # Trigger both callbacks
+    mem.set("user.profile", {"name": "Alice"})
+    assert len(events) == 2
+    assert ("user.profile", {"name": "Alice"}) in events
+    assert ("callback2", "user.profile", {"name": "Alice"}) in events
+
+    events.clear()
+
+    # Unwatch specific callback
+    mem.unwatch("user.profile", on_change)
+
+    mem.set("user.profile.age", 30)
+    assert len(events) == 1
+    assert events[0] == ("callback2", "user.profile.age", 30)
+
+    events.clear()
+
+    # Unwatch all callbacks for path
+    mem.unwatch("user.profile")
+
+    mem.set("user.profile.location", "NY")
+    assert len(events) == 0
+
+    # Unwatch non-existent path shouldn't crash
+    mem.unwatch("does.not.exist")
