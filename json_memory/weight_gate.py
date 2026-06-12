@@ -41,7 +41,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from .synapse import Synapse
 
