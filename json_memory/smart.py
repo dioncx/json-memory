@@ -35,6 +35,11 @@ from .search import AdvancedSearch
 
 # -- Auto-Extractor Patterns -------------------------------------------
 
+
+_NAME_TUPLE = ("name is", "call me", "i'm ")
+_TZ_TUPLE = ("timezone", "utc", "gmt", "est", "pst")
+_PREF_TUPLE = ("prefer", "like", "use")
+
 EXTRACTION_PATTERNS = [
     # Name patterns (use lookahead to stop at delimiters)
     (r"(?:my name is|i'?m called|call me|I am) (\w+)(?:\s+and|\s*,|\s*\.|$)", "user.name", 0.8),
@@ -1899,12 +1904,12 @@ class SmartMemory:
     def _infer_path(self, value: str) -> str:
         """Try to infer a good dotted path from the value content."""
         v_lower = value.lower()
-        if any(w in v_lower for w in ["name is", "call me", "i'm "]):
-            return "user.name"
-        if any(w in v_lower for w in ["timezone", "utc", "gmt", "est", "pst"]):
-            return "user.timezone"
-        if any(w in v_lower for w in ["prefer", "like", "use"]):
-            return "user.preferences"
+        for w in _NAME_TUPLE:
+            if w in v_lower: return "user.name"
+        for w in _TZ_TUPLE:
+            if w in v_lower: return "user.timezone"
+        for w in _PREF_TUPLE:
+            if w in v_lower: return "user.preferences"
         return "user.notes"
 
     # -- Episodic Memory ----------------------------------------------
