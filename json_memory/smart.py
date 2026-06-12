@@ -19,6 +19,8 @@ import time
 import math
 import json
 import threading
+import logging
+
 from typing import Any, Optional, List, Dict, Tuple, Callable
 from pathlib import Path
 
@@ -32,6 +34,8 @@ from .visualizer import visualize_memory
 from .versioning import MemoryVersioning
 from .encryption import MemoryEncryption
 from .search import AdvancedSearch
+
+logger = logging.getLogger(__name__)
 
 # -- Auto-Extractor Patterns -------------------------------------------
 
@@ -877,8 +881,8 @@ class ProceduralMemory:
 
             self.path.parent.mkdir(parents=True, exist_ok=True)
             self.path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error loading/saving data: %s", e)
 
     def _load(self):
         """Load skills from disk."""
@@ -905,8 +909,8 @@ class ProceduralMemory:
                     if domain not in self.domain_index:
                         self.domain_index[domain] = set()
                     self.domain_index[domain].add(name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error loading/saving data: %s", e)
 
 
 # -- Path Metadata -----------------------------------------------------
@@ -984,8 +988,8 @@ class TieredMemory:
                 self.cold = Memory.from_json(
                     self.cold_path.read_text(encoding="utf-8"), max_chars=50000
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Error loading/saving data: %s", e)
 
     def set(self, path: str, value, tier: str = "hot", ttl: Optional[int] = None):
         """Store value in specified tier."""
@@ -1183,8 +1187,8 @@ class SmartMemory:
             if getattr(meta, "protected", False):
                 try:
                     self.mem.mark_protected(p)
-                except Exception:
-                    pass  # Memory may not support mark_protected if old version
+                except Exception as e:
+                    logger.warning("Memory may not support mark_protected if old version: %s", e)
 
     # -- Core Operations ----------------------------------------------
 
@@ -3771,8 +3775,8 @@ class SmartMemory:
                     meta.confidence = data.get("confidence", 1.0)
                     meta.overwrite_count = data.get("overwrite_count", 0)
                     self._meta[path] = meta
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Error loading/saving data: %s", e)
 
     def _save_meta(self):
         """Persist metadata to disk."""
@@ -3796,8 +3800,8 @@ class SmartMemory:
                 }
             self._meta_path.parent.mkdir(parents=True, exist_ok=True)
             self._meta_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error loading/saving data: %s", e)
 
     def _load_brain(self):
         """Load associative brain state from disk."""
@@ -3805,8 +3809,8 @@ class SmartMemory:
             try:
                 data = json.loads(self._brain_path.read_text(encoding="utf-8"))
                 self.brain = Synapse.from_dict(data)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Error loading/saving data: %s", e)
 
     def _save_brain(self):
         """Save associative brain state to disk."""
@@ -3815,8 +3819,8 @@ class SmartMemory:
             self._brain_path.write_text(
                 json.dumps(self.brain.to_dict(), ensure_ascii=False), encoding="utf-8"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error loading/saving data: %s", e)
 
     def _load_episodes(self):
         """Load episodic memory from disk."""
@@ -3839,7 +3843,8 @@ class SmartMemory:
                         if topic and topic not in seen:
                             seen.add(topic)
                             self._active_topics.append(topic)
-            except Exception:
+            except Exception as e:
+                logger.warning("Error loading episodes: %s", e)
                 self._episodes = []
 
     def _save_episodes(self):
@@ -3851,8 +3856,8 @@ class SmartMemory:
                 "active_topics": self._active_topics[:10],
             }
             self._episodes_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error loading/saving data: %s", e)
 
 
 def _value_to_str(value) -> str:
