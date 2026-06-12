@@ -549,6 +549,34 @@ class TestWeightGate:
         assert top[0][0] == "cappuccino"
         assert top[1][0] == "espresso"
 
+
+    def test_set_weight(self, tmp_path):
+        gate = self._make_gate(tmp_path)
+
+        # Test modifying existing association
+        gate.set_weight("coffee", "cappuccino", 0.95)
+        assert gate.get_weights("coffee")["cappuccino"] == 0.95
+
+        # Test adding new association
+        gate.set_weight("coffee", "latte", 0.8)
+        assert gate.get_weights("coffee")["latte"] == 0.8
+
+        # Test bounds clamping
+        gate.set_weight("coffee", "mocha", 1.5)
+        assert gate.get_weights("coffee")["mocha"] == 1.0
+
+        gate.set_weight("coffee", "frappe", -0.5)
+        assert gate.get_weights("coffee")["frappe"] == 0.0
+
+        # Test that _save is called by instantiating a new gate
+        from json_memory import WeightGate
+        path = str(tmp_path / "test_synapse.json")
+        gate2 = WeightGate(path)
+        assert gate2.get_weights("coffee")["cappuccino"] == 0.95
+        assert gate2.get_weights("coffee")["latte"] == 0.8
+        assert gate2.get_weights("coffee")["mocha"] == 1.0
+        assert gate2.get_weights("coffee")["frappe"] == 0.0
+
     def test_manual_strengthen_weaken(self, tmp_path):
         gate = self._make_gate(tmp_path)
         new = gate.strengthen("coffee", "americano", boost=0.2)
