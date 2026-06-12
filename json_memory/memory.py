@@ -603,7 +603,7 @@ class Memory:
             if not cold_path.exists():
                 return {}
             return json.loads(cold_path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, ValueError):
             return {}
 
     def _save_cold(self, data: dict) -> None:
