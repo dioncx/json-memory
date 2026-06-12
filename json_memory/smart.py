@@ -341,7 +341,7 @@ def _detect_negation(query: str) -> dict:
             # Determine negation type (normalize keyword to handle plurals)
             keyword_base = keyword.rstrip("s")  # Remove plural 's'
 
-            if keyword_base in [
+            if keyword_base in {
                 "not",
                 "don't",
                 "doesn't",
@@ -354,9 +354,9 @@ def _detect_negation(query: str) -> dict:
                 "shouldn't",
                 "wouldn't",
                 "couldn't",
-            ]:
+            }:
                 negation_type = "exclusion"
-            elif keyword_base in [
+            elif keyword_base in {
                 "avoid",
                 "warning",
                 "mistake",
@@ -368,9 +368,9 @@ def _detect_negation(query: str) -> dict:
                 "bad",
                 "danger",
                 "risk",
-            ]:
+            }:
                 negation_type = "warning"
-            elif keyword_base in ["no", "none", "nothing", "neither", "nor"]:
+            elif keyword_base in {"no", "none", "nothing", "neither", "nor"}:
                 negation_type = "absence"
             else:
                 negation_type = "general"
