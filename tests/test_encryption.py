@@ -132,3 +132,31 @@ def test_encrypt_decrypt_integration():
         encrypted = enc.encrypt(value)
         decrypted = enc.decrypt(encrypted)
         assert decrypted == value
+
+def test_export_default_key():
+    enc = MemoryEncryption("test-password")
+    exported = enc.export_key()
+
+    # Verify we can import it back and it matches the original master key
+    assert exported is not None
+    assert len(exported) > 0
+    import base64
+    assert base64.b64decode(exported) == enc.master_key
+
+def test_export_specific_key():
+    enc = MemoryEncryption("test-password")
+
+    # Add a custom key
+    custom_key = b'1' * 32
+    enc.add_key("custom-key-2", custom_key)
+
+    exported = enc.export_key("custom-key-2")
+
+    import base64
+    assert base64.b64decode(exported) == custom_key
+
+def test_export_invalid_key():
+    enc = MemoryEncryption("test-password")
+
+    with pytest.raises(ValueError, match="Key not found: unknown-key"):
+        enc.export_key("unknown-key")
