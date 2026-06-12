@@ -98,6 +98,25 @@ class TestScoring:
 
 
 class TestSmartMemory:
+
+    def test_active_topics(self, mem):
+        assert mem.active_topics == []
+
+        mem.log_episode("python", "Discussed python")
+        assert mem.active_topics == ["python"]
+
+        mem.log_episode("RUST", "Discussed rust")
+        assert mem.active_topics == ["rust", "python"]
+
+        # Test limit of 10
+        for i in range(15):
+            mem.log_episode(f"topic_{i}", f"Discussed topic {i}")
+
+        active = mem.active_topics
+        assert len(active) == 10
+        assert active[0] == "topic_14"
+        assert active[-1] == "topic_5"
+
     def test_remember_and_recall(self, mem):
         mem.remember("user.name", "Alice")
         assert mem.recall("user.name") == "Alice"
