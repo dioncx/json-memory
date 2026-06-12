@@ -5,7 +5,7 @@ Ensures your memory follows a consistent shape across sessions.
 """
 
 import json
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .memory import Memory
