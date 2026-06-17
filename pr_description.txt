@@ -1,3 +1,0 @@
-🎯 **What:** The `Memory.mark_protected()` method in `json_memory/memory.py` was completely untested, leading to a gap in coverage for an important data safety feature.
-📊 **Coverage:** The new `test_mark_protected_prevents_eviction` unit test validates the happy path for protection and specifically tests that protected items are skipped during an LRU eviction, correctly causing the algorithm to evict a newer unprotected item instead.
-✨ **Result:** Enhanced test coverage for `json_memory/memory.py`, ensuring that protected paths will not be accidentally removed under high memory pressure.
