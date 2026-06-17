@@ -3,11 +3,31 @@
 import json
 import pytest
 from json_memory import Memory, Synapse, Schema, WeightGate, compress, decompress, savings_report
+from json_memory.compress import minify
 
 # -- Memory Tests --------------------------------------------------
 
 
 class TestMemory:
+
+    def test_estimate_size(self):
+        mem = Memory()
+        # Normal serializable cases
+        assert mem.estimate_size("hello") == 7 # "hello"
+        assert mem.estimate_size({"a": 1}) == 7 # {"a":1}
+        assert mem.estimate_size("über") == 6 # "über"
+        assert mem.estimate_size(12345) == 5 # 12345
+        assert mem.estimate_size([1, 2, 3]) == 7 # [1,2,3]
+
+        # Unserializable type (fallback to str)
+        assert mem.estimate_size({1, 2, 3}) == len(str({1, 2, 3}))
+
+        class Dummy:
+            def __str__(self):
+                return "dummy_object"
+
+        assert mem.estimate_size(Dummy()) == 12 # len("dummy_object")
+
     def test_create_empty(self):
         mem = Memory(max_chars=500)
         assert mem.export() == "{}"
@@ -167,7 +187,93 @@ class TestMemory:
         assert "leafs=1" in r
 
 
-# -- Synapse Tests -------------------------------------------------
+    def test_purge_cold_empty(self, tmp_path):
+        cold_file = tmp_path / "cold.json"
+        mem = Memory(cold_storage_path=str(cold_file))
+
+        res = mem.purge_cold(keep_last=5)
+        assert res["count"] == 0
+        assert res["kept"] == 0
+        assert res["purged"] == []
+
+    def test_purge_cold_keep_last(self, tmp_path):
+        cold_file = tmp_path / "cold.json"
+        mem = Memory(max_chars=40, eviction_policy="lru-archive", cold_storage_path=str(cold_file))
+
+        import time
+        t = time.time()
+
+        mem._archive_to_cold("a", "1")
+        cold_data = mem._load_cold()
+        cold_data["a"]["evicted_at"] = t - 40
+        mem._save_cold(cold_data)
+
+        mem._archive_to_cold("b", "2")
+        cold_data = mem._load_cold()
+        cold_data["b"]["evicted_at"] = t - 30
+        mem._save_cold(cold_data)
+
+        mem._archive_to_cold("c", "3")
+        cold_data = mem._load_cold()
+        cold_data["c"]["evicted_at"] = t - 20
+        mem._save_cold(cold_data)
+
+        mem._archive_to_cold("d", "4")
+        cold_data = mem._load_cold()
+        cold_data["d"]["evicted_at"] = t - 10
+        mem._save_cold(cold_data)
+
+        cold_data = mem._load_cold()
+        assert len(cold_data) == 4
+
+        # keep_last=2 should keep the most recently evicted ('c', 'd'), and purge 'a' and 'b'
+        res = mem.purge_cold(keep_last=2)
+        assert res["count"] == 2
+        assert res["kept"] == 2
+        assert "a" in res["purged"]
+        assert "b" in res["purged"]
+        assert "c" not in res["purged"]
+
+        cold_data_after = mem._load_cold()
+        assert len(cold_data_after) == 2
+        assert "c" in cold_data_after
+        assert "d" in cold_data_after
+
+    def test_purge_cold_older_than(self, tmp_path):
+        cold_file = tmp_path / "cold.json"
+        mem = Memory(max_chars=40, eviction_policy="lru-archive", cold_storage_path=str(cold_file))
+
+        import time
+        cutoff = time.time()
+
+        mem._archive_to_cold("a_old", "1")
+        cold_data = mem._load_cold()
+        cold_data["a_old"]["evicted_at"] = cutoff - 10
+        mem._save_cold(cold_data)
+
+        mem._archive_to_cold("b_new", "2")
+        cold_data = mem._load_cold()
+        cold_data["b_new"]["evicted_at"] = cutoff + 10
+        mem._save_cold(cold_data)
+
+        res = mem.purge_cold(older_than=cutoff)
+        assert "a_old" in res["purged"]
+        assert "b_new" not in res["purged"]
+
+        cold_data_after = mem._load_cold()
+        assert "b_new" in cold_data_after
+        assert "a_old" not in cold_data_after
+
+    def test_purge_cold_no_args(self, tmp_path):
+        cold_file = tmp_path / "cold.json"
+        mem = Memory(max_chars=40, eviction_policy="lru-archive", cold_storage_path=str(cold_file))
+
+        mem._archive_to_cold("a", "1")
+
+        res = mem.purge_cold()
+        assert "error" in res
+        assert res["count"] == 0
+        assert res["purged"] == []
 
 
 class TestSynapse:
@@ -241,6 +347,26 @@ class TestSynapse:
         exported = s.export()
         s2 = Synapse.from_json(exported)
         assert s2.activate("a") == s.activate("a")
+
+
+    def test_get_associations(self):
+        s = Synapse()
+
+        # Test non-existent concept
+        assert s.get_associations("unknown") == {}
+
+        # Test concept with no associations
+        s.link("lonely", [])
+        assert s.get_associations("lonely") == {}
+
+        # Test concept with associations
+        s.link("coffee", ["cappuccino", "americano"], weights={"cappuccino": 0.8, "americano": 0.3})
+        assocs = s.get_associations("coffee")
+        assert assocs == {"cappuccino": 0.8, "americano": 0.3}
+
+        # Test return value is a copy
+        assocs["cappuccino"] = 1.0
+        assert s.get_associations("coffee")["cappuccino"] == 0.8
 
     def test_no_cycles(self):
         s = Synapse()
@@ -435,6 +561,17 @@ class TestCompress:
         decompressed = decompress(compressed)
         assert decompressed == original
 
+
+    def test_minify(self):
+        json_str = '{\n  "key": "value",\n  "hello": "world"\n}'
+        minified = minify(json_str)
+        assert minified == '{"key":"value","hello":"world"}'
+
+        # Test ensure_ascii=False
+        json_with_unicode = '{\n  "key": "✓"\n}'
+        minified_unicode = minify(json_with_unicode)
+        assert minified_unicode == '{"key":"✓"}'
+
     def test_savings_report(self):
         report = savings_report("hello world", "hw")
         assert report["original_chars"] == 11
@@ -548,6 +685,34 @@ class TestWeightGate:
         top = gate.top_associations("coffee", limit=2)
         assert top[0][0] == "cappuccino"
         assert top[1][0] == "espresso"
+
+
+    def test_set_weight(self, tmp_path):
+        gate = self._make_gate(tmp_path)
+
+        # Test modifying existing association
+        gate.set_weight("coffee", "cappuccino", 0.95)
+        assert gate.get_weights("coffee")["cappuccino"] == 0.95
+
+        # Test adding new association
+        gate.set_weight("coffee", "latte", 0.8)
+        assert gate.get_weights("coffee")["latte"] == 0.8
+
+        # Test bounds clamping
+        gate.set_weight("coffee", "mocha", 1.5)
+        assert gate.get_weights("coffee")["mocha"] == 1.0
+
+        gate.set_weight("coffee", "frappe", -0.5)
+        assert gate.get_weights("coffee")["frappe"] == 0.0
+
+        # Test that _save is called by instantiating a new gate
+        from json_memory import WeightGate
+        path = str(tmp_path / "test_synapse.json")
+        gate2 = WeightGate(path)
+        assert gate2.get_weights("coffee")["cappuccino"] == 0.95
+        assert gate2.get_weights("coffee")["latte"] == 0.8
+        assert gate2.get_weights("coffee")["mocha"] == 1.0
+        assert gate2.get_weights("coffee")["frappe"] == 0.0
 
     def test_manual_strengthen_weaken(self, tmp_path):
         gate = self._make_gate(tmp_path)
@@ -918,6 +1083,28 @@ def test_lru_eviction():
     assert mem.has("c")
     assert mem.has("b")
     assert not mem.has("a")  # a should be evicted
+
+
+def test_mark_protected_prevents_eviction():
+    mem = Memory(max_chars=100, eviction_policy="lru")
+
+    mem.set("a", "old_and_stale")  # ~15 chars
+    mem.set("b", "accessing_now")  # ~15 chars
+
+    mem.mark_protected("a")
+
+    import time
+    time.sleep(0.01)
+    mem.get("b")  # b is now newer than a
+
+    # This big update should force something out.
+    # Normally 'a' is the oldest and would be evicted.
+    # But 'a' is protected, so 'b' should be evicted instead!
+    mem.set("c", "X" * 60)
+
+    assert mem.has("c")
+    assert mem.has("a")  # a is protected
+    assert not mem.has("b")  # b was evicted
 
 
 def test_lru_native_overflow():
