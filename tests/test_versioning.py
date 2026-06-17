@@ -1,7 +1,7 @@
 import pytest
 import time
 from unittest.mock import patch
-from json_memory.versioning import MemoryVersioning, MemoryDiff
+from json_memory.versioning import MemoryVersioning
 
 @pytest.fixture
 def versioning():
