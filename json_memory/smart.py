@@ -1,18 +1,8 @@
 from __future__ import annotations
 
-"""
-SmartMemory -- Intelligent memory layer for AI agents.
-
-Wraps Memory + Synapse with:
-- Weighted retrieval scoring (recency + frequency + keyword relevance)
-- Auto-extraction from conversations
-- Tiered memory (hot/warm/cold)
-- Smart prompt injection (only relevant context)
-- Optional semantic search (pip install json-memory[semantic])
-
-Zero dependencies for core functionality.
-"""
-
+import re
+import time
+import math
 import json
 import math
 import re
@@ -32,6 +22,19 @@ from .search import AdvancedSearch
 from .synapse import Synapse
 from .versioning import MemoryVersioning
 from .visualizer import visualize_memory
+
+"""
+SmartMemory -- Intelligent memory layer for AI agents.
+
+Wraps Memory + Synapse with:
+- Weighted retrieval scoring (recency + frequency + keyword relevance)
+- Auto-extraction from conversations
+- Tiered memory (hot/warm/cold)
+- Smart prompt injection (only relevant context)
+- Optional semantic search (pip install json-memory[semantic])
+
+Zero dependencies for core functionality.
+"""
 
 # -- Auto-Extractor Patterns -------------------------------------------
 
@@ -346,7 +349,7 @@ def _detect_negation(query: str) -> dict:
             # Determine negation type (normalize keyword to handle plurals)
             keyword_base = keyword.rstrip("s")  # Remove plural 's'
 
-            if keyword_base in [
+            if keyword_base in {
                 "not",
                 "don't",
                 "doesn't",
@@ -359,9 +362,9 @@ def _detect_negation(query: str) -> dict:
                 "shouldn't",
                 "wouldn't",
                 "couldn't",
-            ]:
+            }:
                 negation_type = "exclusion"
-            elif keyword_base in [
+            elif keyword_base in {
                 "avoid",
                 "warning",
                 "mistake",
@@ -373,9 +376,9 @@ def _detect_negation(query: str) -> dict:
                 "bad",
                 "danger",
                 "risk",
-            ]:
+            }:
                 negation_type = "warning"
-            elif keyword_base in ["no", "none", "nothing", "neither", "nor"]:
+            elif keyword_base in {"no", "none", "nothing", "neither", "nor"}:
                 negation_type = "absence"
             else:
                 negation_type = "general"
@@ -2161,7 +2164,7 @@ class SmartMemory:
                     fact_lines.append(line)
             if fact_lines:
                 parts.append("## Memory\n" + "\n".join(fact_lines))
-                budget_remaining -= sum(len(l) for l in fact_lines)
+                budget_remaining -= sum(len(line) for line in fact_lines)
 
         # 2. Recent episodes (secondary, if space allows)
         if include_episodes and budget_remaining > 100:
@@ -3172,7 +3175,7 @@ class SmartMemory:
                 principles = self.procedural.extract_principles(experience, domain)
                 for p in principles:
                     skill_name = f"principle_{len(self.procedural.skills)}"
-                    skill = self.procedural.add_skill(
+                    self.procedural.add_skill(
                         name=skill_name,
                         principle=p["principle"],
                         domains=p.get("domains", [domain] if domain else []),
