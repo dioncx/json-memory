@@ -348,3 +348,32 @@ class TestEdgeCases:
         assert stats["entries"] == 2
         assert stats["paths"] == 2
         assert "top_scored" in stats
+
+    def test_to_openai_messages(self, mem):
+        mem.remember("user.name", "Alice")
+        mem.remember("user.age", "30")
+
+        # Test default role
+        messages = mem.to_openai_messages("What is my age?")
+        assert isinstance(messages, list)
+        assert len(messages) == 1
+        assert messages[0]["role"] == "system"
+        assert "Memory Context:" in messages[0]["content"]
+        assert "Alice" not in messages[0]["content"]  # Name should not be included for age query
+        assert "30" in messages[0]["content"]
+
+        # Test custom role
+        messages_custom = mem.to_openai_messages("Who am I?", role="developer")
+        assert messages_custom[0]["role"] == "developer"
+
+    def test_to_anthropic_messages(self, mem):
+        mem.remember("user.name", "Bob")
+        mem.remember("user.age", "30")
+
+        messages = mem.to_anthropic_messages("What is my age?")
+        assert isinstance(messages, list)
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+        assert "Relevant context from my memory:" in messages[0]["content"]
+        assert "Bob" not in messages[0]["content"]
+        assert "30" in messages[0]["content"]

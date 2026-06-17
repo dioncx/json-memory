@@ -183,7 +183,7 @@ class MemoryConsolidator:
                 avg = (num1 + num2) / 2
                 if avg > 0:
                     return max(0, 1 - (diff / avg))
-            except:
+            except (ValueError, TypeError):
                 pass
 
         # Token overlap

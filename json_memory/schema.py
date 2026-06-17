@@ -5,7 +5,7 @@ Ensures your memory follows a consistent shape across sessions.
 """
 
 import json
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .memory import Memory
@@ -52,7 +52,7 @@ class Schema:
         """
         return self._check(data, self._template, strict=strict)
 
-    def validate_memory(self, mem: "Memory", strict: bool = False) -> bool:
+    def validate_memory(self, mem: Any, strict: bool = False) -> bool:
         """Validate a Memory instance directly.
 
         Args:
