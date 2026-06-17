@@ -348,3 +348,52 @@ class TestEdgeCases:
         assert stats["entries"] == 2
         assert stats["paths"] == 2
         assert "top_scored" in stats
+
+# ── Encryption ─────────────────────────────────────────────────────────
+
+class TestEncryption:
+    def test_enable_disable_encryption(self, mem):
+        assert mem.encryption is None
+        mem.enable_encryption("test-key")
+        assert mem.encryption is not None
+        assert mem.encryption.key_id is not None
+        mem.disable_encryption()
+        assert mem.encryption is None
+
+    def test_remember_recall_encrypted(self, mem):
+        mem.enable_encryption("test-key")
+
+        secret_data = {"token": "secret123", "password": "password1"}
+        mem.remember_encrypted("user.secrets", secret_data)
+
+        # Verify the stored value is encrypted
+        stored = mem.recall("user.secrets")
+        assert stored != secret_data
+        assert "ciphertext" in stored
+
+        # Recall decrypted
+        decrypted = mem.recall_decrypted("user.secrets")
+        assert decrypted == secret_data
+
+    def test_remember_encrypted_without_enabling(self, mem):
+        with pytest.raises(ValueError, match="Encryption not enabled. Call enable_encryption\\(\\) first."):
+            mem.remember_encrypted("test.path", "secret")
+
+    def test_recall_decrypted_without_enabling(self, mem):
+        with pytest.raises(ValueError, match="Encryption not enabled. Call enable_encryption\\(\\) first."):
+            mem.recall_decrypted("test.path")
+
+    def test_recall_decrypted_default(self, mem):
+        mem.enable_encryption("test-key")
+        assert mem.recall_decrypted("nonexistent.path") is None
+        assert mem.recall_decrypted("nonexistent.path", default="missing") == "missing"
+
+    def test_recall_decrypted_unencrypted(self, mem):
+        mem.enable_encryption("test-key")
+
+        # Store normally
+        normal_data = {"public": "data"}
+        mem.remember("public.path", normal_data)
+
+        # Recalling unencrypted data via recall_decrypted should return normally
+        assert mem.recall_decrypted("public.path") == normal_data
