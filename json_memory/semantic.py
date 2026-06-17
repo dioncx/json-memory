@@ -8,7 +8,6 @@ Without these, falls back gracefully to keyword-based scoring.
 """
 
 from typing import Optional
-import json
 import threading
 
 # Check availability at import time
