@@ -156,13 +156,15 @@ class AdvancedSearch:
         query_words = set(re.findall(r"\w+", query))
         text_words = set(re.findall(r"\w+", text))
 
+        score = 0.0
         if query_words and text_words:
             overlap = len(query_words & text_words)
             total = len(query_words | text_words)
-            return overlap / total if total > 0 else 0.0
+            score = overlap / total if total > 0 else 0.0
 
-        # Use sequence similarity
-        return SequenceMatcher(None, query, text).ratio()
+        # Use sequence similarity and return the max
+        seq_score = SequenceMatcher(None, query, text).ratio()
+        return max(score, seq_score)
 
     def full_text_search(self, query: str, case_sensitive: bool = False) -> List[SearchResult]:
         """Full-text search across all memory.
