@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import re
-import time
-import math
 import json
 import math
 import re
@@ -36,18 +33,21 @@ Wraps Memory + Synapse with:
 Zero dependencies for core functionality.
 """
 
-import re
-import time
-import math
 import json
-import threading
 import logging
-
-from typing import Any, Optional, List, Dict, Tuple, Callable
+import math
+import re
+import threading
+import time
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+_NAME_TUPLE = ("name is", "call me")
+_TZ_TUPLE = ("timezone", "time zone")
+_PREF_TUPLE = ("prefer", "like", "favorite")
 
 logger = logging.getLogger(__name__)
+
 
 # -- Auto-Extractor Patterns -------------------------------------------
 
@@ -1940,11 +1940,14 @@ class SmartMemory:
         """Try to infer a good dotted path from the value content."""
         v_lower = value.lower()
         for w in _NAME_TUPLE:
-            if w in v_lower: return "user.name"
+            if w in v_lower:
+                return "user.name"
         for w in _TZ_TUPLE:
-            if w in v_lower: return "user.timezone"
+            if w in v_lower:
+                return "user.timezone"
         for w in _PREF_TUPLE:
-            if w in v_lower: return "user.preferences"
+            if w in v_lower:
+                return "user.preferences"
         return "user.notes"
 
     # -- Episodic Memory ----------------------------------------------
