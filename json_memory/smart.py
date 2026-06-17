@@ -1,5 +1,4 @@
 
-from __future__ import annotations
 
 """
 SmartMemory -- Intelligent memory layer for AI agents.
@@ -19,7 +18,7 @@ import time
 import math
 import json
 import threading
-from typing import Any, Optional, List, Dict, Tuple, Callable
+from typing import Any, Optional, List, Dict, Tuple, Callable, Union
 from pathlib import Path
 
 from .memory import Memory
@@ -504,11 +503,11 @@ def _detect_temporal_intent(query: str) -> dict:
     return {"intent": None, "range_seconds": None}
 
 
-def _temporal_score(meta: PathMeta, temporal_intent: Optional[dict], now: float) -> float:
+def _temporal_score(meta: "PathMeta", temporal_intent: Optional[dict], now: float) -> float:
     """Calculate temporal relevance score based on intent.
 
     Args:
-        meta: PathMeta object with timestamps
+        meta: "PathMeta" object with timestamps
         temporal_intent: Dict from _detect_temporal_intent()
         now: Current timestamp
 
@@ -565,7 +564,7 @@ def _temporal_score(meta: PathMeta, temporal_intent: Optional[dict], now: float)
     return 0.5
 
 
-def _negation_score(meta: PathMeta, negation_info: Optional[dict], query_tokens: Optional[set[str]] = None) -> float:
+def _negation_score(meta: "PathMeta", negation_info: Optional[dict], query_tokens: Optional[set[str]] = None) -> float:
     """Calculate negation relevance score.
 
     For negated queries (e.g., "What should I NOT do?"), we want to:
@@ -573,7 +572,7 @@ def _negation_score(meta: PathMeta, negation_info: Optional[dict], query_tokens:
     2. Find facts about things to avoid
 
     Args:
-        meta: PathMeta object with metadata
+        meta: "PathMeta" object with metadata
         negation_info: Dict from _detect_negation()
         query_tokens: Token set from query
 
@@ -1156,7 +1155,7 @@ class SmartMemory:
         self.search_engine = AdvancedSearch(self)
 
         # Per-path metadata for scoring
-        self._meta: dict[str, PathMeta] = {}
+        self._meta: dict[str, "PathMeta"] = {}
         self._meta_path = self.path.with_suffix(".meta.json")
         self._lock = threading.RLock()
 
@@ -1652,7 +1651,7 @@ class SmartMemory:
             Float 0.0-1.0 relevance score.
         """
         now = now or time.time()
-        meta: PathMeta | None = self._meta.get(path)
+        meta: Optional["PathMeta"] = self._meta.get(path)
         if meta is None:
             return 0.0
 
@@ -2067,8 +2066,8 @@ class SmartMemory:
         return result
 
     def _boost_by_active_topics(
-        self, scored: list[tuple[float, str, PathMeta | None]], query_tokens: set[str], now: float
-    ) -> list[tuple[float, str, PathMeta | None]]:
+        self, scored: list[tuple[float, str, Optional["PathMeta"]]], query_tokens: set[str], now: float
+    ) -> list[tuple[float, str, Optional["PathMeta"]]]:
         """When keyword match is weak, boost paths related to active session topics."""
         # Get tokens from active topics
         topic_tokens = set()
@@ -2302,7 +2301,7 @@ class SmartMemory:
         """
         return self.mem.merge_from_file(path, prefix=prefix, conflict=conflict)
 
-    def merge_from(self, other: SmartMemory | dict[str, Any], conflict_strategy: str = "keep_newer") -> dict[str, Any]:
+    def merge_from(self, other: Union["SmartMemory", dict[str, Any]], conflict_strategy: str = "keep_newer") -> dict[str, Any]:
         """Merge another SmartMemory instance into this one.
 
         Transfers facts, metadata, and handles path conflicts.
