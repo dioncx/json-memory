@@ -1,5 +1,5 @@
 import pytest
-from json_memory.contradiction import ContradictionDetector, detect_contradictions
+from json_memory.contradiction import ContradictionDetector
 
 class TestContradictionDetector:
     @pytest.fixture
