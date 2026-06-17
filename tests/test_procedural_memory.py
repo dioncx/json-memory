@@ -3,11 +3,10 @@
 import json
 import os
 import tempfile
-import time
 
 import pytest
 
-from json_memory.smart import SmartMemory, ProceduralMemory, Skill
+from json_memory.smart import ProceduralMemory, Skill, SmartMemory
 
 
 class TestSkill:
