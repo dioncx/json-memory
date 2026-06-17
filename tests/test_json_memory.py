@@ -3,6 +3,7 @@
 import json
 import pytest
 from json_memory import Memory, Synapse, Schema, WeightGate, compress, decompress, savings_report
+from json_memory.compress import minify
 
 # -- Memory Tests --------------------------------------------------
 
@@ -539,6 +540,17 @@ class TestCompress:
         compressed = compress(original)
         decompressed = decompress(compressed)
         assert decompressed == original
+
+
+    def test_minify(self):
+        json_str = '{\n  "key": "value",\n  "hello": "world"\n}'
+        minified = minify(json_str)
+        assert minified == '{"key":"value","hello":"world"}'
+
+        # Test ensure_ascii=False
+        json_with_unicode = '{\n  "key": "✓"\n}'
+        minified_unicode = minify(json_with_unicode)
+        assert minified_unicode == '{"key":"✓"}'
 
     def test_savings_report(self):
         report = savings_report("hello world", "hw")
