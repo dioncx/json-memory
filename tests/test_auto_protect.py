@@ -1,5 +1,5 @@
-import pytest
 from json_memory.smart import SmartMemory
+
 
 def test_auto_protect_user_paths():
     mem = SmartMemory()
