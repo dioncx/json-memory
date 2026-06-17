@@ -43,6 +43,10 @@ import json
 import threading
 import logging
 
+_NAME_TUPLE = ('name', 'call me', 'i am', 'my name')
+_TZ_TUPLE = ('timezone', 'time zone', 'location', 'live in')
+_PREF_TUPLE = ('prefer', 'like', 'want', 'setting')
+
 from typing import Any, Optional, List, Dict, Tuple, Callable
 from pathlib import Path
 
