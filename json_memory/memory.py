@@ -417,7 +417,7 @@ class Memory:
                 "newest": newest,
                 "paths": paths,
             }
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             return {"count": 0, "chars": 0, "path": self.cold_storage_path}
 
     def cold_search(
