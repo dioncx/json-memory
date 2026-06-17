@@ -559,11 +559,9 @@ class Memory:
 
         if keep_last is not None:
             # Keep the N most recent, purge the rest
-            for i, (path, entry) in enumerate(paths_by_age):
-                if i < len(paths_by_age) - keep_last:
-                    to_purge.append(path)
-                else:
-                    to_keep.append(path)
+            split_idx = max(0, len(paths_by_age) - keep_last)
+            to_purge = [path for path, _ in paths_by_age[:split_idx]]
+            to_keep = [path for path, _ in paths_by_age[split_idx:]]
         elif older_than is not None:
             for path, entry in paths_by_age:
                 evicted_at = entry.get("evicted_at", 0) if isinstance(entry, dict) else 0
