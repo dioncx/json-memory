@@ -6,7 +6,6 @@ contradicts existing facts in memory, helping maintain consistency.
 """
 
 import re
-import time
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
