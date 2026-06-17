@@ -1085,6 +1085,28 @@ def test_lru_eviction():
     assert not mem.has("a")  # a should be evicted
 
 
+def test_mark_protected_prevents_eviction():
+    mem = Memory(max_chars=100, eviction_policy="lru")
+
+    mem.set("a", "old_and_stale")  # ~15 chars
+    mem.set("b", "accessing_now")  # ~15 chars
+
+    mem.mark_protected("a")
+
+    import time
+    time.sleep(0.01)
+    mem.get("b")  # b is now newer than a
+
+    # This big update should force something out.
+    # Normally 'a' is the oldest and would be evicted.
+    # But 'a' is protected, so 'b' should be evicted instead!
+    mem.set("c", "X" * 60)
+
+    assert mem.has("c")
+    assert mem.has("a")  # a is protected
+    assert not mem.has("b")  # b was evicted
+
+
 def test_lru_native_overflow():
     mem = Memory(max_chars=50, eviction_policy="lru")
     import pytest
