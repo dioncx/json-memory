@@ -348,6 +348,26 @@ class TestSynapse:
         s2 = Synapse.from_json(exported)
         assert s2.activate("a") == s.activate("a")
 
+
+    def test_get_associations(self):
+        s = Synapse()
+
+        # Test non-existent concept
+        assert s.get_associations("unknown") == {}
+
+        # Test concept with no associations
+        s.link("lonely", [])
+        assert s.get_associations("lonely") == {}
+
+        # Test concept with associations
+        s.link("coffee", ["cappuccino", "americano"], weights={"cappuccino": 0.8, "americano": 0.3})
+        assocs = s.get_associations("coffee")
+        assert assocs == {"cappuccino": 0.8, "americano": 0.3}
+
+        # Test return value is a copy
+        assocs["cappuccino"] = 1.0
+        assert s.get_associations("coffee")["cappuccino"] == 0.8
+
     def test_no_cycles(self):
         s = Synapse()
         s.link("a", ["b"])
