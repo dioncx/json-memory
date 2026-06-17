@@ -1199,9 +1199,10 @@ class SmartMemory:
         self._load_brain()
 
         # Initialize meta for existing data
-        for p in self.mem.paths():
-            if p not in self._meta:
-                self._init_meta(p, self.mem.get(p))
+        missing_paths = set(self.mem.paths()) - set(self._meta.keys())
+        for p in missing_paths:
+            # Initialize only missing paths
+            self._init_meta(p, self.mem.get(p))
         # Re-mark protected entries in the underlying Memory after loading meta from disk
         for p, meta in self._meta.items():
             if getattr(meta, "protected", False):
