@@ -8,6 +8,25 @@ from json_memory import Memory, Synapse, Schema, WeightGate, compress, decompres
 
 
 class TestMemory:
+
+    def test_estimate_size(self):
+        mem = Memory()
+        # Normal serializable cases
+        assert mem.estimate_size("hello") == 7 # "hello"
+        assert mem.estimate_size({"a": 1}) == 7 # {"a":1}
+        assert mem.estimate_size("über") == 6 # "über"
+        assert mem.estimate_size(12345) == 5 # 12345
+        assert mem.estimate_size([1, 2, 3]) == 7 # [1,2,3]
+
+        # Unserializable type (fallback to str)
+        assert mem.estimate_size({1, 2, 3}) == len(str({1, 2, 3}))
+
+        class Dummy:
+            def __str__(self):
+                return "dummy_object"
+
+        assert mem.estimate_size(Dummy()) == 12 # len("dummy_object")
+
     def test_create_empty(self):
         mem = Memory(max_chars=500)
         assert mem.export() == "{}"
