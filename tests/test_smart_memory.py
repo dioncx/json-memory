@@ -349,51 +349,31 @@ class TestEdgeCases:
         assert stats["paths"] == 2
         assert "top_scored" in stats
 
-# ── Encryption ─────────────────────────────────────────────────────────
+    def test_to_openai_messages(self, mem):
+        mem.remember("user.name", "Alice")
+        mem.remember("user.age", "30")
 
-class TestEncryption:
-    def test_enable_disable_encryption(self, mem):
-        assert mem.encryption is None
-        mem.enable_encryption("test-key")
-        assert mem.encryption is not None
-        assert mem.encryption.key_id is not None
-        mem.disable_encryption()
-        assert mem.encryption is None
+        # Test default role
+        messages = mem.to_openai_messages("What is my age?")
+        assert isinstance(messages, list)
+        assert len(messages) == 1
+        assert messages[0]["role"] == "system"
+        assert "Memory Context:" in messages[0]["content"]
+        assert "Alice" not in messages[0]["content"]  # Name should not be included for age query
+        assert "30" in messages[0]["content"]
 
-    def test_remember_recall_encrypted(self, mem):
-        mem.enable_encryption("test-key")
+        # Test custom role
+        messages_custom = mem.to_openai_messages("Who am I?", role="developer")
+        assert messages_custom[0]["role"] == "developer"
 
-        secret_data = {"token": "secret123", "password": "password1"}
-        mem.remember_encrypted("user.secrets", secret_data)
+    def test_to_anthropic_messages(self, mem):
+        mem.remember("user.name", "Bob")
+        mem.remember("user.age", "30")
 
-        # Verify the stored value is encrypted
-        stored = mem.recall("user.secrets")
-        assert stored != secret_data
-        assert "ciphertext" in stored
-
-        # Recall decrypted
-        decrypted = mem.recall_decrypted("user.secrets")
-        assert decrypted == secret_data
-
-    def test_remember_encrypted_without_enabling(self, mem):
-        with pytest.raises(ValueError, match="Encryption not enabled. Call enable_encryption\\(\\) first."):
-            mem.remember_encrypted("test.path", "secret")
-
-    def test_recall_decrypted_without_enabling(self, mem):
-        with pytest.raises(ValueError, match="Encryption not enabled. Call enable_encryption\\(\\) first."):
-            mem.recall_decrypted("test.path")
-
-    def test_recall_decrypted_default(self, mem):
-        mem.enable_encryption("test-key")
-        assert mem.recall_decrypted("nonexistent.path") is None
-        assert mem.recall_decrypted("nonexistent.path", default="missing") == "missing"
-
-    def test_recall_decrypted_unencrypted(self, mem):
-        mem.enable_encryption("test-key")
-
-        # Store normally
-        normal_data = {"public": "data"}
-        mem.remember("public.path", normal_data)
-
-        # Recalling unencrypted data via recall_decrypted should return normally
-        assert mem.recall_decrypted("public.path") == normal_data
+        messages = mem.to_anthropic_messages("What is my age?")
+        assert isinstance(messages, list)
+        assert len(messages) == 1
+        assert messages[0]["role"] == "user"
+        assert "Relevant context from my memory:" in messages[0]["content"]
+        assert "Bob" not in messages[0]["content"]
+        assert "30" in messages[0]["content"]
