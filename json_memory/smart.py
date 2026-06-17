@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 """
@@ -14,24 +13,25 @@ Wraps Memory + Synapse with:
 Zero dependencies for core functionality.
 """
 
-import re
-import time
-import math
 import json
+import math
+import re
 import threading
-from typing import Any, Optional, List, Dict, Tuple, Callable
+import time
 from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .memory import Memory
-from .synapse import Synapse
 from .concept_map import expand_query_semantic, get_concept_category
-from .contradiction import detect_contradictions, Contradiction, ContradictionDetector
-from .consolidation import consolidate_memory, ConsolidationGroup
-from .forgetting import ForgettingCurve, MemoryStrength
-from .visualizer import visualize_memory
-from .versioning import MemoryVersioning
+from .consolidation import ConsolidationGroup, consolidate_memory
+from .contradiction import (Contradiction, ContradictionDetector,
+                            detect_contradictions)
 from .encryption import MemoryEncryption
+from .forgetting import ForgettingCurve, MemoryStrength
+from .memory import Memory
 from .search import AdvancedSearch
+from .synapse import Synapse
+from .versioning import MemoryVersioning
+from .visualizer import visualize_memory
 
 # -- Auto-Extractor Patterns -------------------------------------------
 
@@ -220,7 +220,7 @@ def _normalize_tokens(text: str) -> set[str]:
     # Handles cases like "professional" <-> "profession", "trading" <-> "trade"
     stems = set()
     suffixes = ["ial", "ion", "ing", "ed", "ly", "ment", "ness", "able", "ive", "al", "ic", "ty"]
-    for token in list(expanded):
+    for token in expanded:
         for suffix in suffixes:
             if token.endswith(suffix) and len(token) > len(suffix) + 2:
                 stem = token[: -len(suffix)]
@@ -570,7 +570,9 @@ def _temporal_score(meta: PathMeta, temporal_intent: Optional[dict], now: float)
     return 0.5
 
 
-def _negation_score(meta: PathMeta, negation_info: Optional[dict], query_tokens: Optional[set[str]] = None) -> float:
+def _negation_score(
+    meta: PathMeta, negation_info: Optional[dict], query_tokens: Optional[set[str]] = None
+) -> float:
     """Calculate negation relevance score.
 
     For negated queries (e.g., "What should I NOT do?"), we want to:
@@ -695,7 +697,11 @@ class ProceduralMemory:
             self._load()
 
     def add_skill(
-        self, name: str, principle: str, domains: Optional[list[str]] = None, examples: Optional[list[str]] = None
+        self,
+        name: str,
+        principle: str,
+        domains: Optional[list[str]] = None,
+        examples: Optional[list[str]] = None,
     ) -> Skill:
         """Add a new skill or strengthen existing one."""
         with self._lock:
@@ -1131,7 +1137,9 @@ class SmartMemory:
         self.brain: Synapse = Synapse()
 
         # Tiered storage (optional)
-        self.tiered: Optional[TieredMemory] = TieredMemory(path, max_hot_chars=max_chars) if tiered else None
+        self.tiered: Optional[TieredMemory] = (
+            TieredMemory(path, max_hot_chars=max_chars) if tiered else None
+        )
 
         # Procedural memory (optional)
         self.procedural: Optional[ProceduralMemory] = (
@@ -1231,24 +1239,26 @@ class SmartMemory:
             }
             if check_contradictions:
                 self._check_remember_contradictions(path, value, result)
-            
+
             old_value = self.mem.get(path)
             is_new = old_value is None
-            
+
             self._track_remember_overwrite(path, value, old_value, is_new, result)
             self._guard_remember_size(value, result)
-            
+
             self.mem.set(path, value, ttl=ttl)
 
-            if not protected and path.startswith('user.'):
+            if not protected and path.startswith("user."):
                 protected = True
 
-            self._init_meta(path, value, ttl=ttl, protected=protected, tags=tags, confidence=confidence)
+            self._init_meta(
+                path, value, ttl=ttl, protected=protected, tags=tags, confidence=confidence
+            )
 
             if protected:
                 self.mem.mark_protected(path)
             if self.tiered:
-                self.tiered.set(path, value, tier='hot', ttl=ttl)
+                self.tiered.set(path, value, tier="hot", ttl=ttl)
 
             # Auto-link to tags via Synapse
             if tags:
@@ -1256,7 +1266,9 @@ class SmartMemory:
                     self.brain.link(tag, [path])
 
             self._save_meta()
-            self._record_remember_version_and_events(path, value, old_value, is_new, tags, protected, ttl)
+            self._record_remember_version_and_events(
+                path, value, old_value, is_new, tags, protected, ttl
+            )
 
             return result
 
@@ -1270,19 +1282,19 @@ class SmartMemory:
 
         contradictions = detect_contradictions(path, value, existing_facts)
         if contradictions:
-            result['contradictions'] = contradictions
-            result['warnings'].append(f"Found {len(contradictions)} contradiction(s)")
+            result["contradictions"] = contradictions
+            result["warnings"].append(f"Found {len(contradictions)} contradiction(s)")
             for c in contradictions:
                 print(f"⚠️  Contradiction detected: {c.explanation}", flush=True)
 
     def _track_remember_overwrite(self, path: str, value, old_value, is_new: bool, result: dict):
         """Track overwrite metrics and warnings."""
-        result['is_new'] = is_new
+        result["is_new"] = is_new
         if not is_new:
-            result['old_value'] = old_value
+            result["old_value"] = old_value
             if old_value != value:
-                result['overwritten'] = True
-                result['warnings'].append(f"Overwrote '{path}': {old_value!r} → {value!r}")
+                result["overwritten"] = True
+                result["warnings"].append(f"Overwrote '{path}': {old_value!r} → {value!r}")
                 if path in self._meta:
                     self._meta[path].overwrite_count += 1
 
@@ -1290,22 +1302,33 @@ class SmartMemory:
         """Guard against oversized values."""
         value_str = json.dumps(value, ensure_ascii=False, default=str)
         if len(value_str) > 2000:
-            result['warnings'].append(f"Value size {len(value_str)} chars exceeds 2000 — may impact context budget")
+            result["warnings"].append(
+                f"Value size {len(value_str)} chars exceeds 2000 — may impact context budget"
+            )
             if len(value_str) > 5000:
                 raise ValueError(f"Value too large ({len(value_str)} chars) — max 5000")
 
-    def _record_remember_version_and_events(self, path: str, value, old_value, is_new: bool, tags: Optional[List[str]], protected: bool, ttl: Optional[int]):
+    def _record_remember_version_and_events(
+        self,
+        path: str,
+        value,
+        old_value,
+        is_new: bool,
+        tags: Optional[List[str]],
+        protected: bool,
+        ttl: Optional[int],
+    ):
         """Record version history and trigger events."""
-        operation = 'set' if is_new else 'update'
+        operation = "set" if is_new else "update"
         self.versioning.record_change(
             path=path,
             old_value=old_value,
             new_value=value,
             operation=operation,
-            metadata={'tags': tags, 'protected': protected, 'ttl': ttl}
+            metadata={"tags": tags, "protected": protected, "ttl": ttl},
         )
-        self._trigger_event('on_set' if is_new else 'on_update', path, old_value, value)
-        self._trigger_event('on_change', path, old_value, value)
+        self._trigger_event("on_set" if is_new else "on_update", path, old_value, value)
+        self._trigger_event("on_change", path, old_value, value)
 
     def get_contradictions(self) -> list[Contradiction]:
         """Get all contradictions in memory.
@@ -1914,7 +1937,9 @@ class SmartMemory:
 
     # -- Episodic Memory ----------------------------------------------
 
-    def log_episode(self, topic: str, summary: Optional[str] = None, paths: Optional[list[str]] = None):
+    def log_episode(
+        self, topic: str, summary: Optional[str] = None, paths: Optional[list[str]] = None
+    ):
         """Log a conversation episode for timeline-based recall.
 
         Use this to track what was discussed, so later queries like
@@ -2172,9 +2197,7 @@ class SmartMemory:
         context = self.build_context(query=query, **kwargs)
         return [{"role": role, "content": f"Memory Context:\n{context}"}]
 
-    def to_anthropic_messages(
-        self, query: Optional[str] = None, **kwargs
-    ) -> List[Dict[str, str]]:
+    def to_anthropic_messages(self, query: Optional[str] = None, **kwargs) -> List[Dict[str, str]]:
         """Format memory context for Anthropic (Claude) API.
 
         Args:
@@ -2307,7 +2330,9 @@ class SmartMemory:
         """
         return self.mem.merge_from_file(path, prefix=prefix, conflict=conflict)
 
-    def merge_from(self, other: SmartMemory | dict[str, Any], conflict_strategy: str = "keep_newer") -> dict[str, Any]:
+    def merge_from(
+        self, other: SmartMemory | dict[str, Any], conflict_strategy: str = "keep_newer"
+    ) -> dict[str, Any]:
         """Merge another SmartMemory instance into this one.
 
         Transfers facts, metadata, and handles path conflicts.
@@ -2864,7 +2889,9 @@ class SmartMemory:
         """
         return self.get_history(limit=limit)
 
-    def get_most_changed(self, limit: int = 10, seconds: Optional[float] = None) -> List[Tuple[str, int]]:
+    def get_most_changed(
+        self, limit: int = 10, seconds: Optional[float] = None
+    ) -> List[Tuple[str, int]]:
         """Get most frequently changed paths.
 
         Args:
@@ -3117,7 +3144,9 @@ class SmartMemory:
 
     # -- Procedural Memory Operations ---------------------------------
 
-    def learn(self, experience: str, domain: Optional[str] = None, extract_principles: bool = True) -> dict:
+    def learn(
+        self, experience: str, domain: Optional[str] = None, extract_principles: bool = True
+    ) -> dict:
         """Extract principles and skills from an experience.
 
         Args:
@@ -3205,7 +3234,9 @@ class SmartMemory:
 
             return result
 
-    def apply_skill(self, skill_name: str, new_domain: Optional[str] = None, outcome: Optional[str] = None) -> bool:
+    def apply_skill(
+        self, skill_name: str, new_domain: Optional[str] = None, outcome: Optional[str] = None
+    ) -> bool:
         """Record that a skill was applied (strengthens it).
 
         Args:
@@ -3547,7 +3578,9 @@ class SmartMemory:
                 self._save_meta()
             return result
 
-    def purge_cold(self, older_than: Optional[float] = None, keep_last: Optional[int] = None) -> dict:
+    def purge_cold(
+        self, older_than: Optional[float] = None, keep_last: Optional[int] = None
+    ) -> dict:
         """Permanently delete old facts from cold storage.
 
         Args:
