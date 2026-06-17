@@ -13,8 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .concept_map import expand_query_semantic, get_concept_category
 from .consolidation import ConsolidationGroup, consolidate_memory
-from .contradiction import (Contradiction, ContradictionDetector,
-                            detect_contradictions)
+from .contradiction import Contradiction, ContradictionDetector, detect_contradictions
 from .encryption import MemoryEncryption
 from .forgetting import ForgettingCurve, MemoryStrength
 from .memory import Memory
@@ -46,11 +45,13 @@ import logging
 from typing import Any, Optional, List, Dict, Tuple, Callable
 from pathlib import Path
 
-
 logger = logging.getLogger(__name__)
 
 # -- Auto-Extractor Patterns -------------------------------------------
 
+_NAME_TUPLE = ("name", "called", "am")
+_TZ_TUPLE = ("timezone", "time", "gmt", "utc", "est", "pst", "cst", "ist")
+_PREF_TUPLE = ("prefer", "like", "use")
 EXTRACTION_PATTERNS = [
     # Name patterns (use lookahead to stop at delimiters)
     (r"(?:my name is|i'?m called|call me|I am) (\w+)(?:\s+and|\s*,|\s*\.|$)", "user.name", 0.8),
@@ -1940,11 +1941,14 @@ class SmartMemory:
         """Try to infer a good dotted path from the value content."""
         v_lower = value.lower()
         for w in _NAME_TUPLE:
-            if w in v_lower: return "user.name"
+            if w in v_lower:
+                return "user.name"
         for w in _TZ_TUPLE:
-            if w in v_lower: return "user.timezone"
+            if w in v_lower:
+                return "user.timezone"
         for w in _PREF_TUPLE:
-            if w in v_lower: return "user.preferences"
+            if w in v_lower:
+                return "user.preferences"
         return "user.notes"
 
     # -- Episodic Memory ----------------------------------------------
